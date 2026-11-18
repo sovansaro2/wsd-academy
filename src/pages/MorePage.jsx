@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { motion } from 'motion/react';
 import {
   Calculator,
   PenLine,
@@ -13,6 +14,15 @@ import { useLanguage } from '../context/LanguageContext';
 import { usePWAInstall } from '../hooks/usePWA';
 import SupportModal from '../components/common/SupportModal';
 import RecommendBookModal from '../components/common/RecommendBookModal';
+
+const TILE_CLASSES =
+  'bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-[transform,background-color,border-color] duration-200 ease-out transform-gpu hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group';
+
+const tileTransition = (index) => ({
+  duration: 0.24,
+  delay: index * 0.025,
+  ease: [0.16, 1, 0.3, 1],
+});
 
 export default function MorePage() {
   const { language, toggleLanguage } = useLanguage();
@@ -49,71 +59,86 @@ export default function MorePage() {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         {/* Book Recommendation Tile */}
-        <button
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={tileTransition(0)}
           type="button"
           id="more-recommend-book-btn"
           onClick={() => setIsRecommendOpen(true)}
-          className="bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer group"
+          className={TILE_CLASSES}
         >
-          <BookPlus className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform" />
+          <BookPlus className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
           <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
             {isKm ? 'ណែនាំសៀវភៅ' : 'Recommend Book'}
           </span>
-        </button>
+        </motion.button>
 
         {/* Support / Donate QR Tile */}
-        <button
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={tileTransition(1)}
           type="button"
           id="more-support-btn"
           onClick={() => setIsSupportOpen(true)}
-          className="bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer group"
+          className={TILE_CLASSES}
         >
-          <HeartHandshake className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform" />
+          <HeartHandshake className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
           <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
             {isKm ? 'ឧបត្ថម្ភ' : 'Support'}
           </span>
-        </button>
+        </motion.button>
 
-        {linkTiles.map((item) => {
+        {linkTiles.map((item, idx) => {
           const Icon = item.icon;
           return (
-            <Link
+            <motion.div
               key={item.to}
-              to={item.to}
-              className="bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer group"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={tileTransition(idx + 2)}
             >
-              <Icon className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform" />
-              <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
-                {item.label}
-              </span>
-            </Link>
+              <Link to={item.to} className={`${TILE_CLASSES} h-full`}>
+                <Icon className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
+                <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
+                  {item.label}
+                </span>
+              </Link>
+            </motion.div>
           );
         })}
 
         {/* Language Toggle Tile */}
-        <button
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={tileTransition(5)}
           type="button"
           onClick={toggleLanguage}
-          className="bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer group"
+          className={TILE_CLASSES}
         >
-          <Globe className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform" />
+          <Globe className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
           <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
             {isKm ? 'ប្ដូរភាសា · ខ្មែរ / EN' : 'Language · EN / KH'}
           </span>
-        </button>
+        </motion.button>
 
         {/* Optional PWA Install Tile when installable */}
         {isInstallable && !isInstalled && (
-          <button
+          <motion.button
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={tileTransition(6)}
             type="button"
             onClick={install}
-            className="bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer group"
+            className={TILE_CLASSES}
           >
-            <Download className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform" />
+            <Download className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
             <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
               {isKm ? 'ដំឡើងកម្មវិធី' : 'Install App'}
             </span>
-          </button>
+          </motion.button>
         )}
       </div>
 

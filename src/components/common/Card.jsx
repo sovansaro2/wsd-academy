@@ -24,7 +24,7 @@ export default function Card({
   };
 
   const hoverStyles = hoverable
-    ? 'hover:bg-white/[0.08] hover:border-white/20 transition-all duration-150 cursor-pointer'
+    ? 'hover:bg-white/[0.08] hover:border-white/20 transition-[transform,background-color,border-color] duration-200 ease-out transform-gpu cursor-pointer'
     : '';
 
   return (

@@ -20,7 +20,7 @@ export default function Button({
   ...props
 }) {
   const baseStyles =
-    'inline-flex items-center justify-center font-kh-body font-medium transition-all duration-150 select-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none active:scale-[0.98]';
+    'inline-flex items-center justify-center font-kh-body font-medium transition-[transform,background-color,border-color,color,opacity] duration-200 ease-out transform-gpu select-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none active:scale-[0.975]';
 
   const variantStyles = {
     primary:

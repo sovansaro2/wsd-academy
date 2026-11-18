@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { motion, LayoutGroup } from 'motion/react';
 import {
   PenLine,
   Camera,
@@ -612,7 +613,12 @@ export default function ResourcePage() {
 
           {/* Results Workspace */}
           {result && (
-            <div className="space-y-6 w-full min-w-0">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+              className="space-y-6 w-full min-w-0"
+            >
               {!result.is_valid_topic ? (
                 <div className="bg-white/[0.05] border border-white/10 p-5 rounded-2xl">
                   <div className="flex items-start gap-3">
@@ -815,32 +821,58 @@ export default function ResourcePage() {
 
                   {/* Mode Switcher Tabs + Copy Controls */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl self-start">
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('outline')}
-                        className={`flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                          activeTab === 'outline'
-                            ? 'bg-white/18 text-white font-semibold'
-                            : 'text-white/75 hover:text-white hover:bg-white/[0.06]'
-                        }`}
-                      >
-                        <ListOrdered className="w-4 h-4" />
-                        <span>{isKm ? 'គម្រោងតែង និងវិភាគប្រធាន' : 'Outline & Analysis'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('essay')}
-                        className={`flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                          activeTab === 'essay'
-                            ? 'bg-white/18 text-white font-semibold'
-                            : 'text-white/75 hover:text-white hover:bg-white/[0.06]'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4" />
-                        <span>{isKm ? 'សំណេរគំរូពេញលេញ' : 'Full Model Essay'}</span>
-                      </button>
-                    </div>
+                    <LayoutGroup id="essay-result-tabs">
+                      <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl self-start">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('outline')}
+                          className={`relative flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors duration-200 whitespace-nowrap shrink-0 cursor-pointer ${
+                            activeTab === 'outline'
+                              ? 'text-white font-semibold'
+                              : 'text-white/75 hover:text-white hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          {activeTab === 'outline' && (
+                            <motion.span
+                              layoutId="essay-tab-pill"
+                              transition={{
+                                type: 'spring',
+                                stiffness: 340,
+                                damping: 30,
+                                mass: 0.75,
+                              }}
+                              className="absolute inset-0 rounded-lg bg-white/18"
+                            />
+                          )}
+                          <ListOrdered className="relative z-10 w-4 h-4" />
+                          <span className="relative z-10">{isKm ? 'គម្រោងតែង និងវិភាគប្រធាន' : 'Outline & Analysis'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('essay')}
+                          className={`relative flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors duration-200 whitespace-nowrap shrink-0 cursor-pointer ${
+                            activeTab === 'essay'
+                              ? 'text-white font-semibold'
+                              : 'text-white/75 hover:text-white hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          {activeTab === 'essay' && (
+                            <motion.span
+                              layoutId="essay-tab-pill"
+                              transition={{
+                                type: 'spring',
+                                stiffness: 340,
+                                damping: 30,
+                                mass: 0.75,
+                              }}
+                              className="absolute inset-0 rounded-lg bg-white/18"
+                            />
+                          )}
+                          <FileText className="relative z-10 w-4 h-4" />
+                          <span className="relative z-10">{isKm ? 'សំណេរគំរូពេញលេញ' : 'Full Model Essay'}</span>
+                        </button>
+                      </div>
+                    </LayoutGroup>
 
                     {activeTab === 'outline' ? (
                       <button
@@ -1159,7 +1191,7 @@ export default function ResourcePage() {
                   )}
                 </>
               )}
-            </div>
+            </motion.div>
           )}
           {/* Save Essay with Personal Note Modal */}
           <SaveEssayModal

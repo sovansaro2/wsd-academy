@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { motion, LayoutGroup } from 'motion/react';
 import {
   Search as SearchIcon,
   X,
@@ -356,29 +357,43 @@ export default function SearchPage() {
 
         {/* Scope Switcher */}
         {isAuthenticated && (
-          <div className="flex items-center gap-1.5">
-            {[
-              { id: 'all', label: isKm ? 'ទាំងអស់' : 'All' },
-              { id: 'books', label: isKm ? 'សៀវភៅ' : 'Books' },
-              { id: 'essays', label: isKm ? 'តែងសេចក្ដីរក្សាទុក' : 'Saved Essays' },
-            ].map((tab) => {
-              const isActive = scope === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setScope(tab.id)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                    isActive
-                      ? 'bg-[#38BDF8]/18 text-[#38BDF8] font-semibold'
-                      : 'bg-white/[0.05] text-white/70 hover:text-white hover:bg-white/[0.09]'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
+          <LayoutGroup id="search-scope">
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'all', label: isKm ? 'ទាំងអស់' : 'All' },
+                { id: 'books', label: isKm ? 'សៀវភៅ' : 'Books' },
+                { id: 'essays', label: isKm ? 'តែងសេចក្ដីរក្សាទុក' : 'Saved Essays' },
+              ].map((tab) => {
+                const isActive = scope === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setScope(tab.id)}
+                    className={`relative px-3.5 py-1.5 rounded-xl text-xs font-medium transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                      isActive
+                        ? 'text-[#38BDF8] font-semibold'
+                        : 'bg-white/[0.05] text-white/70 hover:text-white hover:bg-white/[0.09]'
+                    }`}
+                  >
+                    {isActive && (
+                      <motion.span
+                        layoutId="search-scope-pill"
+                        transition={{
+                          type: 'spring',
+                          stiffness: 340,
+                          damping: 30,
+                          mass: 0.75,
+                        }}
+                        className="absolute inset-0 rounded-xl bg-[#38BDF8]/18"
+                      />
+                    )}
+                    <span className="relative z-10">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </LayoutGroup>
         )}
       </header>
 

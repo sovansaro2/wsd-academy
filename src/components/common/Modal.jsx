@@ -1,4 +1,5 @@
 import React, { useEffect, useCallback, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 
@@ -67,49 +68,46 @@ export default function Modal({
   // Animation variants adapted for mobile bottom-sheet vs desktop dialog
   const modalVariants = {
     initial: {
-      y: isMobile ? '100%' : 16,
+      y: isMobile ? '100%' : 14,
       opacity: isMobile ? 1 : 0,
-      scale: isMobile ? 1 : 0.96,
+      scale: isMobile ? 1 : 0.97,
     },
     animate: {
       y: 0,
       opacity: 1,
       scale: 1,
-      transition: {
-        type: 'spring',
-        damping: 28,
-        stiffness: 300,
-        mass: 0.8,
-      },
+      transition: isMobile
+        ? { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+        : { duration: 0.24, ease: [0.16, 1, 0.3, 1] },
     },
     exit: {
-      y: isMobile ? '100%' : 16,
+      y: isMobile ? '100%' : 10,
       opacity: isMobile ? 1 : 0,
-      scale: isMobile ? 1 : 0.96,
+      scale: isMobile ? 1 : 0.98,
       transition: {
-        duration: 0.22,
-        ease: [0.32, 0, 0.67, 0],
+        duration: 0.2,
+        ease: [0.4, 0, 1, 1],
       },
     },
   };
 
-  return (
+  const modalContent = (
     <AnimatePresence>
       {isOpen && (
         <div
           id="modal-portal"
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 overflow-hidden sm:overflow-y-auto"
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-6 overflow-hidden sm:overflow-y-auto"
         >
-          {/* Backdrop with Soft Blur */}
+          {/* GPU-friendly Backdrop without per-frame blur recomputation */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
             onClick={closeOnBackdrop ? onClose : undefined}
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs"
+            className="fixed inset-0 bg-[#081a21]/70 will-change-[opacity]"
           />
 
           {/* Modal Container: Full Screen at bottom, left, right on mobile/PWA with smooth slide-up */}
@@ -118,7 +116,7 @@ export default function Modal({
             initial="initial"
             animate="animate"
             exit="exit"
-            className={`relative w-full ${selectedSize} bg-[#194350] border-t sm:border border-white/15 rounded-t-[28px] sm:rounded-2xl rounded-b-none sm:rounded-b-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[85vh] z-10 font-kh-body text-white ${className}`}
+            className={`relative w-full ${selectedSize} bg-[#194350] border-t sm:border border-white/15 rounded-t-[28px] sm:rounded-2xl rounded-b-none sm:rounded-b-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[85vh] z-10 font-kh-body text-white will-change-transform transform-gpu ${className}`}
           >
             {/* Mobile Sheet Handle Bar */}
             <div className="w-10 h-1.5 bg-white/25 rounded-full mx-auto mt-2.5 mb-0.5 sm:hidden shrink-0" />
@@ -168,4 +166,7 @@ export default function Modal({
       )}
     </AnimatePresence>
   );
+
+  if (typeof document === 'undefined') return modalContent;
+  return createPortal(modalContent, document.body);
 }

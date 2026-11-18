@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link, NavLink } from 'react-router-dom';
+import { motion, LayoutGroup } from 'motion/react';
 import {
   Home,
   Calculator,
@@ -45,7 +46,7 @@ export default function Sidebar() {
     >
       {/* Brand Header */}
       <div className="py-3.5 px-5 border-b border-white/10 flex items-center justify-center">
-        <Link to="/" className="flex items-center justify-center">
+        <Link to="/" className="flex items-center justify-center transition-transform duration-200 hover:scale-[1.02]">
           <img
             src={logoNameImg}
             alt={t('app.title')}
@@ -54,42 +55,59 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      {/* Navigation Links - Clean tonal highlight without heavy border clutter */}
-      <div className="flex-1 py-3 px-3 overflow-y-auto space-y-1">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const label = t(`nav.${item.key}`);
+      {/* Navigation Links - Clean tonal highlight with smooth sliding indicator */}
+      <LayoutGroup id="desktop-sidebar">
+        <motion.div
+          layoutScroll
+          className="flex-1 py-3 px-3 overflow-y-auto space-y-1"
+        >
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const label = t(`nav.${item.key}`);
 
-          return (
-            <NavLink
-              key={item.path}
-              id={`sidebar-link-${item.key}`}
-              to={item.path}
-              end={item.path === '/'}
-              className={({ isActive }) =>
-                `w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-left transition-colors duration-150 ${
-                  isActive
-                    ? 'bg-[#38BDF8]/15 text-[#38BDF8] font-semibold'
-                    : 'text-white/70 font-medium hover:text-white hover:bg-white/[0.06]'
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon
-                    className={`h-5 w-5 shrink-0 ${
-                      isActive ? 'text-[#38BDF8]' : 'text-white/60'
-                    }`}
-                  />
-                  <span className="truncate text-[15px] leading-relaxed">
-                    {label}
-                  </span>
-                </>
-              )}
-            </NavLink>
-          );
-        })}
-      </div>
+            return (
+              <NavLink
+                key={item.path}
+                id={`sidebar-link-${item.key}`}
+                to={item.path}
+                end={item.path === '/'}
+                className={({ isActive }) =>
+                  `relative w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-left transition-colors duration-200 ease-out ${
+                    isActive
+                      ? 'text-[#38BDF8] font-semibold'
+                      : 'text-white/70 font-medium hover:text-white hover:bg-white/[0.06]'
+                  }`
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive && (
+                      <motion.span
+                        layoutId="sidebar-active-bg"
+                        transition={{
+                          type: 'spring',
+                          stiffness: 320,
+                          damping: 30,
+                          mass: 0.75,
+                        }}
+                        className="absolute inset-0 rounded-xl bg-[#38BDF8]/15"
+                      />
+                    )}
+                    <Icon
+                      className={`relative z-10 h-5 w-5 shrink-0 transition-colors duration-200 ${
+                        isActive ? 'text-[#38BDF8]' : 'text-white/60'
+                      }`}
+                    />
+                    <span className="relative z-10 truncate text-[15px] leading-relaxed">
+                      {label}
+                    </span>
+                  </>
+                )}
+              </NavLink>
+            );
+          })}
+        </motion.div>
+      </LayoutGroup>
 
       {/* Footer Controls: Language Switcher + History Button */}
       <div className="p-3.5 border-t border-white/10 flex items-center justify-between gap-2">

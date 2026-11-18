@@ -408,10 +408,10 @@ export default function HomePage() {
             <Link
               key={tool.to}
               to={tool.to}
-              className="group bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-3.5 lg:p-4 flex items-center justify-between gap-2.5 transition-colors"
+              className="group bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-3.5 lg:p-4 flex items-center justify-between gap-2.5 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.985]"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 lg:w-10 lg:h-10 rounded-xl bg-[#38BDF8]/12 text-[#38BDF8] flex items-center justify-center shrink-0">
+                <div className="w-9 h-9 lg:w-10 lg:h-10 rounded-xl bg-[#38BDF8]/12 text-[#38BDF8] flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-105">
                   <Icon className="w-4.5 h-4.5 lg:w-5 lg:h-5" />
                 </div>
                 <div className="min-w-0">

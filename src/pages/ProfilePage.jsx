@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { motion } from 'motion/react';
 import {
   User,
   Shield,
@@ -323,7 +324,14 @@ export default function ProfilePage() {
   // SUBPAGE 1: Profile Details (ព័ត៌មានគណនីសិស្ស)
   if (currentView === 'profile') {
     return (
-      <div id="student-info-subpage" className="max-w-3xl mx-auto space-y-5 font-kh-body pb-10">
+      <motion.div
+        key="profile"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        id="student-info-subpage"
+        className="max-w-3xl mx-auto space-y-5 font-kh-body pb-10"
+      >
         {/* Back navigation header */}
         <div className="flex items-center gap-3 pb-3 border-b border-white/10">
           <button
@@ -670,14 +678,21 @@ export default function ProfilePage() {
             setIsCropModalOpen(false);
           }}
         />
-      </div>
+      </motion.div>
     );
   }
 
   // SUBPAGE 2: Password and Security
   if (currentView === 'security') {
     return (
-      <div id="security-subpage" className="max-w-xl mx-auto space-y-5 font-kh-body pb-10">
+      <motion.div
+        key="security"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        id="security-subpage"
+        className="max-w-xl mx-auto space-y-5 font-kh-body pb-10"
+      >
         {/* Back navigation header */}
         <div className="pb-3 border-b border-white/10">
           <button
@@ -954,14 +969,21 @@ export default function ProfilePage() {
           </div>
         )}
 
-      </div>
+      </motion.div>
     );
   }
 
   // SUBPAGE 3: About
   if (currentView === 'about') {
     return (
-      <div id="about-subpage" className="max-w-xl mx-auto space-y-5 font-kh-body pb-10">
+      <motion.div
+        key="about"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        id="about-subpage"
+        className="max-w-xl mx-auto space-y-5 font-kh-body pb-10"
+      >
         {/* Back navigation header */}
         <div className="pb-3 border-b border-white/10">
           <button
@@ -1017,24 +1039,35 @@ export default function ProfilePage() {
             </div>
           </div>
         </Card>
-      </div>
+      </motion.div>
     );
   }
 
   // SUBPAGE 4: Bookmark (រក្សាទុក)
   if (currentView === 'bookmark') {
     return (
-      <SavedEssaysView
-        currentUser={currentUser}
-        isKm={isKm}
-        onBack={() => handleSelectView('menu')}
-      />
+      <motion.div
+        key="bookmark"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <SavedEssaysView
+          currentUser={currentUser}
+          isKm={isKm}
+          onBack={() => handleSelectView('menu')}
+        />
+      </motion.div>
     );
   }
 
   // 3. DEFAULT ROOT VIEW: CLEAN ACCOUNT MENU CARD ONLY
   return (
-    <div
+    <motion.div
+      key="menu"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       id="account-main-menu-view"
       className={`max-w-md mx-auto py-2 sm:py-4 select-none ${
         isKm ? 'font-kh-body' : 'font-rajdhani'
@@ -1269,7 +1302,7 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { motion } from 'motion/react';
 import Card from '../components/common/Card';
 import AuthRequiredBanner from '../components/auth/AuthRequiredBanner';
 import { useLanguage } from '../context/LanguageContext';
@@ -340,7 +341,12 @@ export default function SolverPage() {
 
           {/* Results Section */}
           {result && (
-            <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500 w-full min-w-0">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+              className="space-y-8 w-full min-w-0"
+            >
               {!result.is_problem ? (
                 /* Rejection Message */
                 <div className="bg-white/[0.06] border border-white/10 p-5 rounded-2xl">
@@ -417,7 +423,7 @@ export default function SolverPage() {
                   </div>
                 </>
               )}
-            </div>
+            </motion.div>
           )}
         </div>
       )}

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
 import {
   X,
   Download,
@@ -564,15 +566,21 @@ export default function PdfReaderModal({
     scrollToPage(pageInput);
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4 font-kh-body"
+  const readerModal = (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className="fixed inset-0 z-[60] bg-[#081a21]/80 flex items-center justify-center p-0 sm:p-4 font-kh-body"
       role="dialog"
       aria-modal="true"
       aria-label={book.title}
     >
-      <div
-        className={`w-full max-w-5xl h-full sm:h-[92vh] sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-colors ${
+      <motion.div
+        initial={{ opacity: 0, y: 12, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+        className={`w-full max-w-5xl h-full sm:h-[92vh] sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden border transition-colors will-change-transform transform-gpu ${
           isNightMode
             ? 'bg-slate-900 border-slate-800 text-slate-100'
             : 'bg-[#194350] border-white/15 text-white'
@@ -953,7 +961,10 @@ export default function PdfReaderModal({
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
+
+  if (typeof document === 'undefined') return readerModal;
+  return createPortal(readerModal, document.body);
 }

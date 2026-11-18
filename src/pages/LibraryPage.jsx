@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { motion, LayoutGroup } from 'motion/react';
 import {
   BookOpen,
   Bookmark,
@@ -627,7 +628,7 @@ export default function LibraryPage() {
         }}
       >
         <div
-          className="flex h-full w-full transition-transform duration-500 ease-out"
+          className="flex h-full w-full transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform"
           style={{ transform: `translateX(-${activeSlide * 100}%)` }}
         >
           {HERO_SLIDES.map((slide) => (
@@ -698,29 +699,43 @@ export default function LibraryPage() {
 
       {/* Level Filter Segmented Control */}
       <div className="flex flex-col gap-2.5">
-        <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl overflow-x-auto select-none">
-          {[
-            ...LIBRARY_LEVELS,
-            { id: 'offline', labelKm: `Offline (${toKhmerNumber(offlineMap.size)})`, labelEn: `Offline (${offlineMap.size})` },
-            { id: 'saved', labelKm: `ចំណាំ (${toKhmerNumber(bookmarkedKeys.length)})`, labelEn: `Saved (${bookmarkedKeys.length})` },
-          ].map((lvl) => {
-            const isActive = selectedLevel === lvl.id;
-            return (
-              <button
-                key={lvl.id}
-                type="button"
-                onClick={() => handleSelectLevel(lvl.id)}
-                className={`min-h-[38px] px-3.5 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  isActive
-                    ? 'bg-[#38BDF8]/18 text-[#38BDF8] font-semibold shadow-xs'
-                    : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
-                }`}
-              >
-                {isKm ? lvl.labelKm : lvl.labelEn}
-              </button>
-            );
-          })}
-        </div>
+        <LayoutGroup id="library-levels">
+          <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl overflow-x-auto select-none">
+            {[
+              ...LIBRARY_LEVELS,
+              { id: 'offline', labelKm: `Offline (${toKhmerNumber(offlineMap.size)})`, labelEn: `Offline (${offlineMap.size})` },
+              { id: 'saved', labelKm: `ចំណាំ (${toKhmerNumber(bookmarkedKeys.length)})`, labelEn: `Saved (${bookmarkedKeys.length})` },
+            ].map((lvl) => {
+              const isActive = selectedLevel === lvl.id;
+              return (
+                <button
+                  key={lvl.id}
+                  type="button"
+                  onClick={() => handleSelectLevel(lvl.id)}
+                  className={`relative min-h-[38px] px-3.5 py-2 rounded-lg text-xs font-medium transition-colors duration-200 whitespace-nowrap shrink-0 cursor-pointer ${
+                    isActive
+                      ? 'text-[#38BDF8] font-semibold'
+                      : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
+                  }`}
+                >
+                  {isActive && (
+                    <motion.span
+                      layoutId="library-level-pill"
+                      transition={{
+                        type: 'spring',
+                        stiffness: 340,
+                        damping: 30,
+                        mass: 0.75,
+                      }}
+                      className="absolute inset-0 rounded-lg bg-[#38BDF8]/18 shadow-xs"
+                    />
+                  )}
+                  <span className="relative z-10">{isKm ? lvl.labelKm : lvl.labelEn}</span>
+                </button>
+              );
+            })}
+          </div>
+        </LayoutGroup>
 
         {/* Grade & Subject Filter Row */}
         {books.length > 0 && (
