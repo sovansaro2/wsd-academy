@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, LayoutGroup } from 'motion/react';
 import {
   BookOpen,
   Bookmark,
   BookmarkCheck,
   Check,
-  Loader2,
   WifiOff,
   AlertCircle,
   FolderOpen,
@@ -16,7 +15,9 @@ import {
   SlidersHorizontal,
   ArrowLeft,
   Shuffle,
+  Globe2,
 } from 'lucide-react';
+import DotsLoader from '../components/common/DotsLoader';
 import AuthRequiredBanner from '../components/auth/AuthRequiredBanner';
 import PdfReaderModal from '../components/library/PdfReaderModal';
 import { useLanguage } from '../context/LanguageContext';
@@ -29,6 +30,7 @@ import {
   LIBRARY_LEVELS,
   LIBRARY_GRADES,
   formatGradeLabel,
+  formatGradeBadgeNumber,
   formatFileSize,
   getSubjectTheme,
   toKhmerNumber,
@@ -40,6 +42,9 @@ import {
   getBookmarkedKeys,
   toggleBookBookmark,
   getCachedCoverBlobUrl,
+  getCachedBookCatalog,
+  saveCachedBookCatalog,
+  mergeBooksWithOffline,
 } from '../utils/offlineLibrary';
 import { extractAndStoreBookCover } from '../utils/pdfClient';
 
@@ -61,6 +66,7 @@ const SUBJECT_ORDER = [
   'ict',
   'home_economics',
   'general',
+  'general_knowledge',
 ];
 
 const HERO_SLIDES = [
@@ -103,11 +109,28 @@ export default function LibraryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [selectedLevel, setSelectedLevel] = useState('all'); // 'all' | 'primary' | 'lower_secondary' | 'upper_secondary' | 'offline' | 'saved'
+  const [searchParams] = useSearchParams();
+  const initialSubjectParam = searchParams.get('subject') || 'all';
+  const initialLevelParam = searchParams.get('level') || 'all';
+
+  const [selectedLevel, setSelectedLevel] = useState(initialLevelParam);
   const [selectedGrade, setSelectedGrade] = useState('all');
-  const [selectedSubject, setSelectedSubject] = useState('all');
+  const [selectedSubject, setSelectedSubject] = useState(initialSubjectParam);
   const [isSubjectMenuOpen, setIsSubjectMenuOpen] = useState(false);
   const subjectDropdownRef = useRef(null);
+
+  useEffect(() => {
+    const paramSubject = searchParams.get('subject');
+    const paramLevel = searchParams.get('level');
+    if (paramSubject) {
+      setSelectedSubject(paramSubject);
+      setSelectedLevel('all');
+      setSelectedGrade('all');
+      setShowAllBooksFlat(false);
+    } else if (paramLevel) {
+      setSelectedLevel(paramLevel);
+    }
+  }, [searchParams]);
 
   const [activeSlide, setActiveSlide] = useState(0);
   const [isSliderPaused, setIsSliderPaused] = useState(false);
@@ -137,12 +160,21 @@ export default function LibraryPage() {
   }, [currentUser]);
 
   const loadBooks = useCallback(async () => {
-    setIsLoading(true);
     setError(null);
     const offlineList = await refreshOfflineAndBookmarks();
+    const cachedCatalog = getCachedBookCatalog();
+    const cachedMerged = mergeBooksWithOffline(cachedCatalog, offlineList);
+
+    if (cachedMerged.length > 0) {
+      setBooks(cachedMerged);
+      setIsConfigured(true);
+      setIsLoading(false);
+    } else {
+      setIsLoading(true);
+    }
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setBooks(offlineList);
+      setBooks(cachedMerged);
       setIsConfigured(true);
       setIsLoading(false);
       return;
@@ -158,19 +190,13 @@ export default function LibraryPage() {
 
       setIsConfigured(Boolean(data.configured));
       const fetchedBooks = Array.isArray(data.books) ? data.books : [];
-
-      // Merge offline books in case any saved book is offline-only
-      const byKey = new Map(fetchedBooks.map((b) => [b.r2_key, b]));
-      for (const off of offlineList) {
-        if (off?.r2_key && !byKey.has(off.r2_key)) {
-          byKey.set(off.r2_key, off);
-        }
-      }
-      setBooks(Array.from(byKey.values()));
+      saveCachedBookCatalog(fetchedBooks);
+      setBooks(mergeBooksWithOffline(fetchedBooks, offlineList));
     } catch (err) {
-      // Fallback gracefully to offline cached books if network fails
-      if (offlineList.length > 0) {
-        setBooks(offlineList);
+      // Fallback gracefully to cached catalog + offline downloaded books if network fails
+      if (cachedMerged.length > 0) {
+        setBooks(cachedMerged);
+        setIsConfigured(true);
       } else {
         setError(err?.message || (isKm ? 'មិនអាចទាញបញ្ជីសៀវភៅបានទេ។' : 'Unable to load library books.'));
       }
@@ -200,6 +226,7 @@ export default function LibraryPage() {
     if (selectedLevel === 'primary') return [4, 5, 6];
     if (selectedLevel === 'lower_secondary') return [7, 8, 9];
     if (selectedLevel === 'upper_secondary') return [10, 11, 12];
+    if (selectedLevel === 'general_knowledge') return [];
     return LIBRARY_GRADES;
   }, [selectedLevel]);
 
@@ -208,12 +235,12 @@ export default function LibraryPage() {
     let totalCount = 0;
 
     for (const book of books) {
-      if (selectedLevel === 'offline' && !offlineMap.has(book.r2_key)) continue;
       if (selectedLevel === 'saved' && !bookmarkedKeys.includes(book.r2_key)) continue;
       if (
         (selectedLevel === 'primary' ||
           selectedLevel === 'lower_secondary' ||
-          selectedLevel === 'upper_secondary') &&
+          selectedLevel === 'upper_secondary' ||
+          selectedLevel === 'general_knowledge') &&
         book.level !== selectedLevel
       ) {
         continue;
@@ -242,7 +269,7 @@ export default function LibraryPage() {
     });
 
     return { availableSubjects: sorted, subjectFilterTotal: totalCount };
-  }, [books, offlineMap, bookmarkedKeys, selectedGrade, selectedLevel]);
+  }, [books, bookmarkedKeys, selectedGrade, selectedLevel]);
 
   // Close subject dropdown on outside click or Escape key
   useEffect(() => {
@@ -315,6 +342,12 @@ export default function LibraryPage() {
 
   const subjectGroups = useMemo(() => {
     const grouped = new Map();
+    grouped.set('general_knowledge', {
+      subject: 'general_knowledge',
+      label: isKm ? 'ចំណេះដឹងទូទៅ' : 'General Knowledge',
+      books: [],
+    });
+
     for (const book of books) {
       const subKey = book.subject || 'general';
       if (!grouped.has(subKey)) {
@@ -329,7 +362,7 @@ export default function LibraryPage() {
 
     const result = Array.from(grouped.values()).map((group) => {
       const sortedBooks = [...group.books].sort((a, b) => Number(a.grade) - Number(b.grade));
-      const grades = sortedBooks.map((b) => Number(b.grade)).filter((g) => Number.isFinite(g));
+      const grades = sortedBooks.map((b) => Number(b.grade)).filter((g) => Number.isFinite(g) && g > 0);
       const minGrade = grades.length ? Math.min(...grades) : 4;
       const maxGrade = grades.length ? Math.max(...grades) : 12;
       const leadBook =
@@ -356,16 +389,16 @@ export default function LibraryPage() {
     });
 
     return result;
-  }, [books, localCovers, coverErrors]);
+  }, [books, localCovers, coverErrors, isKm]);
 
   const filteredBooks = useMemo(() => {
     return books.filter((book) => {
-      if (selectedLevel === 'offline' && !offlineMap.has(book.r2_key)) return false;
       if (selectedLevel === 'saved' && !bookmarkedKeys.includes(book.r2_key)) return false;
       if (
         (selectedLevel === 'primary' ||
           selectedLevel === 'lower_secondary' ||
-          selectedLevel === 'upper_secondary') &&
+          selectedLevel === 'upper_secondary' ||
+          selectedLevel === 'general_knowledge') &&
         book.level !== selectedLevel
       ) {
         return false;
@@ -374,7 +407,7 @@ export default function LibraryPage() {
       if (selectedSubject !== 'all' && book.subject !== selectedSubject) return false;
       return true;
     });
-  }, [books, offlineMap, bookmarkedKeys, selectedLevel, selectedGrade, selectedSubject]);
+  }, [books, bookmarkedKeys, selectedLevel, selectedGrade, selectedSubject]);
 
   // Hydrate locally cached cover images first (zero network)
   useEffect(() => {
@@ -546,7 +579,7 @@ export default function LibraryPage() {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setActionError(
         isKm
-          ? `គ្មានអ៊ីនធឺណិតទេ — សៀវភៅ «${book.title}» មិនទាន់បានទាញយកទុក Offline នៅឡើយទេ។`
+          ? `គ្មានអ៊ីនធឺណិតទេ — សៀវភៅ «${book.title}» មិនទាន់បានទាញយកនៅឡើយទេ។`
           : `You are offline — "${book.title}" has not been downloaded yet.`
       );
       return;
@@ -703,7 +736,6 @@ export default function LibraryPage() {
           <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl overflow-x-auto select-none">
             {[
               ...LIBRARY_LEVELS,
-              { id: 'offline', labelKm: `Offline (${toKhmerNumber(offlineMap.size)})`, labelEn: `Offline (${offlineMap.size})` },
               { id: 'saved', labelKm: `ចំណាំ (${toKhmerNumber(bookmarkedKeys.length)})`, labelEn: `Saved (${bookmarkedKeys.length})` },
             ].map((lvl) => {
               const isActive = selectedLevel === lvl.id;
@@ -738,9 +770,10 @@ export default function LibraryPage() {
         </LayoutGroup>
 
         {/* Grade & Subject Filter Row */}
-        {books.length > 0 && (
+        {books.length > 0 && (availableGrades.length > 0 || availableSubjects.length > 1) && (
           <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 w-full sm:flex-1 sm:min-w-0">
+            {availableGrades.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 w-full sm:flex-1 sm:min-w-0">
               <button
                 type="button"
                 onClick={() => {
@@ -779,7 +812,8 @@ export default function LibraryPage() {
                   </button>
                 );
               })}
-            </div>
+              </div>
+            )}
 
             {availableSubjects.length > 1 && (
               <div ref={subjectDropdownRef} className="relative w-full sm:w-56 md:w-60 shrink-0">
@@ -940,19 +974,29 @@ export default function LibraryPage() {
 
       {/* Main Content */}
       {isLoading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {[0, 1, 2, 3].map((n) => (
-            <div
-              key={n}
-              className="bg-white/[0.05] rounded-xl overflow-hidden animate-pulse"
-            >
-              <div className="aspect-[3/4] bg-white/[0.06]" />
-              <div className="p-4 space-y-2.5">
-                <div className="h-4 bg-white/10 rounded w-3/4" />
-                <div className="h-3 bg-white/10 rounded w-1/2" />
+        <div className="space-y-4">
+          <div className="flex items-center justify-center py-2">
+            <DotsLoader
+              size="md"
+              color="accent"
+              label={isKm ? 'កំពុងផ្ទុកសៀវភៅ...' : 'Loading textbooks...'}
+              className="text-xs text-white/75"
+            />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((n) => (
+              <div
+                key={n}
+                className="bg-white/[0.05] rounded-xl overflow-hidden animate-pulse"
+              >
+                <div className="aspect-[3/4] bg-white/[0.06]" />
+                <div className="p-4 space-y-2.5">
+                  <div className="h-4 bg-white/10 rounded w-3/4" />
+                  <div className="h-3 bg-white/10 rounded w-1/2" />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       ) : !isConfigured && books.length === 0 ? (
         <div className="bg-white/[0.05] border border-white/10 rounded-2xl p-10 sm:p-14 text-center space-y-4">
@@ -1030,9 +1074,9 @@ export default function LibraryPage() {
                           />
                         ) : (
                           <div
-                            className="w-full h-full flex items-center justify-center font-kh-title text-lg tabular-nums bg-transparent text-white"
+                            className="w-full h-full flex items-center justify-center font-kh-title text-sm sm:text-base tabular-nums bg-transparent text-white px-1 text-center"
                           >
-                            {toKhmerNumber(book.grade)}
+                            {formatGradeBadgeNumber(book.grade, isKm)}
                           </div>
                         )}
 
@@ -1070,14 +1114,21 @@ export default function LibraryPage() {
                         )}
                       </div>
 
-                      {isSavedOffline && !isDownloading && (
+                      {isSavedOffline && !isDownloading ? (
                         <span
                           className="w-6 h-6 text-emerald-300 inline-flex items-center justify-center shrink-0"
-                          title={isKm ? 'អាន Offline បាន' : 'Saved offline'}
+                          title={isKm ? 'បានទាញយក' : 'Downloaded'}
                         >
                           <Check className="w-4 h-4" />
                         </span>
-                      )}
+                      ) : !isOnline && !isDownloading ? (
+                        <span
+                          className="w-6 h-6 text-white/40 inline-flex items-center justify-center shrink-0"
+                          title={isKm ? 'ត្រូវការអ៊ីនធឺណិតដើម្បីទាញយក' : 'Internet required to download'}
+                        >
+                          <WifiOff className="w-3.5 h-3.5" />
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -1111,12 +1162,16 @@ export default function LibraryPage() {
                     (!coverErrors[lead.r2_key] ? lead.cover_url || '' : '')
                   : '';
                 const isExtractingLead = lead ? Boolean(extractingCoverKeys[lead.r2_key]) : false;
-                const gradeRangeText =
-                  group.minGrade === group.maxGrade
-                    ? formatGradeLabel(group.minGrade, isKm)
-                    : isKm
-                    ? `ទី ${toKhmerNumber(group.minGrade)}–${toKhmerNumber(group.maxGrade)}`
-                    : `Gr. ${group.minGrade}–${group.maxGrade}`;
+                const isGeneralKnowledgeAlbum = group.subject === 'general_knowledge';
+                const gradeRangeText = isGeneralKnowledgeAlbum
+                  ? isKm
+                    ? 'សៀវភៅផ្សេងៗ'
+                    : 'Other Books'
+                  : group.minGrade === group.maxGrade
+                  ? formatGradeLabel(group.minGrade, isKm)
+                  : isKm
+                  ? `ទី ${toKhmerNumber(group.minGrade)}–${toKhmerNumber(group.maxGrade)}`
+                  : `Gr. ${group.minGrade}–${group.maxGrade}`;
 
                 return (
                   <button
@@ -1161,11 +1216,13 @@ export default function LibraryPage() {
 
                             <div className="my-auto flex flex-col items-center justify-center text-center gap-1.5">
                               <div
-                                className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-white/[0.08] flex items-center justify-center"
+                                className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/[0.08] flex items-center justify-center"
                                 style={{ color: theme.accent }}
                               >
                                 {isExtractingLead ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  <DotsLoader size="xs" color="accent" />
+                                ) : isGeneralKnowledgeAlbum ? (
+                                  <Globe2 className="w-5 h-5" />
                                 ) : (
                                   <BookOpen className="w-4 h-4" />
                                 )}
@@ -1198,35 +1255,49 @@ export default function LibraryPage() {
       ) : filteredBooks.length === 0 ? (
         <div className="bg-white/[0.05] border border-white/10 rounded-2xl p-10 sm:p-14 text-center space-y-3">
           <div className="w-12 h-12 rounded-xl bg-white/[0.08] text-white flex items-center justify-center mx-auto">
-            <BookOpen className="w-6 h-6" />
+            {selectedSubject === 'general_knowledge' || selectedLevel === 'general_knowledge' ? (
+              <Globe2 className="w-6 h-6 text-[#38BDF8]" />
+            ) : (
+              <BookOpen className="w-6 h-6" />
+            )}
           </div>
           <p className="text-sm font-medium text-white">
-            {selectedLevel === 'offline'
-              ? isKm
-                ? 'មិនទាន់មានសៀវភៅរក្សាទុក Offline ទេ'
-                : 'No books saved offline yet'
-              : selectedLevel === 'saved'
+            {selectedLevel === 'saved'
               ? isKm
                 ? 'មិនទាន់មានសៀវភៅដែលបានចំណាំទេ'
                 : 'No bookmarked books yet'
+              : selectedSubject === 'general_knowledge' || selectedLevel === 'general_knowledge'
+              ? isKm
+                ? 'មិនទាន់មានសៀវភៅចំណេះដឹងទូទៅនៅឡើយទេ'
+                : 'No general knowledge books uploaded yet'
               : isKm
               ? 'រកមិនឃើញសៀវភៅតាមលក្ខខណ្ឌនេះទេ'
               : 'No books match your filters'}
           </p>
-          {(selectedLevel !== 'all' || selectedGrade !== 'all' || selectedSubject !== 'all' || showAllBooksFlat) && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedLevel('all');
-                setSelectedGrade('all');
-                setSelectedSubject('all');
-                setShowAllBooksFlat(false);
-              }}
-              className="px-4 py-2 text-xs font-semibold text-white bg-white/12 hover:bg-white/20 rounded-lg transition-colors cursor-pointer"
-            >
-              {isKm ? 'ត្រឡប់ទៅអាល់ប៊ុមមុខវិជ្ជា' : 'Back to Subject Albums'}
-            </button>
-          )}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+            {isAdmin && (selectedSubject === 'general_knowledge' || selectedLevel === 'general_knowledge') && (
+              <Link
+                to="/admin"
+                className="px-4 py-2 text-xs font-bold text-[#092731] bg-[#38BDF8] hover:bg-[#56CAF9] rounded-lg transition-colors"
+              >
+                {isKm ? 'Upload សៀវភៅចូលអាល់ប៊ុមនេះ' : 'Upload Books Here'}
+              </Link>
+            )}
+            {(selectedLevel !== 'all' || selectedGrade !== 'all' || selectedSubject !== 'all' || showAllBooksFlat) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedLevel('all');
+                  setSelectedGrade('all');
+                  setSelectedSubject('all');
+                  setShowAllBooksFlat(false);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-white bg-white/12 hover:bg-white/20 rounded-lg transition-colors cursor-pointer"
+              >
+                {isKm ? 'ត្រឡប់ទៅអាល់ប៊ុមមុខវិជ្ជា' : 'Back to Subject Albums'}
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -1302,10 +1373,10 @@ export default function LibraryPage() {
                             {book.subject_label}
                           </span>
                           <span
-                            className="font-kh-title text-base sm:text-lg leading-none tabular-nums shrink-0"
+                            className="font-kh-title text-sm sm:text-base leading-none tabular-nums shrink-0"
                             style={{ color: theme.accent }}
                           >
-                            {toKhmerNumber(book.grade)}
+                            {formatGradeBadgeNumber(book.grade, isKm)}
                           </span>
                         </div>
 
@@ -1315,7 +1386,7 @@ export default function LibraryPage() {
                             style={{ color: theme.accent }}
                           >
                             {isExtractingCover ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <DotsLoader size="xs" color="accent" />
                             ) : (
                               <BookOpen className="w-4 h-4" />
                             )}
@@ -1399,14 +1470,21 @@ export default function LibraryPage() {
                       </div>
 
                       <div className="flex items-center gap-0.5 shrink-0">
-                        {isSavedOffline && !isDownloading && (
+                        {isSavedOffline && !isDownloading ? (
                           <span
-                            title={isKm ? 'បានរក្សាទុក Offline' : 'Saved offline'}
+                            title={isKm ? 'បានទាញយក' : 'Downloaded'}
                             className="w-5 h-5 inline-flex items-center justify-center text-emerald-300"
                           >
                             <Check className="w-3.5 h-3.5" />
                           </span>
-                        )}
+                        ) : !isOnline && !isDownloading ? (
+                          <span
+                            title={isKm ? 'ត្រូវការអ៊ីនធឺណិតដើម្បីទាញយក' : 'Internet required to download'}
+                            className="w-5 h-5 inline-flex items-center justify-center text-white/40"
+                          >
+                            <WifiOff className="w-3 h-3" />
+                          </span>
+                        ) : null}
 
                         <button
                           type="button"

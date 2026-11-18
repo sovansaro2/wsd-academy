@@ -48,8 +48,8 @@ export default defineConfig(() => {
           skipWaiting: true,
           clientsClaim: true,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          globIgnores: ['**/assets/aistudio/**'],
+          globPatterns: ['**/*.{js,css,html,ico,png,jpg,JPG,jpeg,webp,svg,woff,woff2,mjs,wasm}'],
+          globIgnores: ['**/assets/aistudio/image_*'],
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
@@ -59,6 +59,52 @@ export default defineConfig(() => {
               options: {
                 cacheName: 'pages-cache',
                 networkTimeoutSeconds: 3,
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin && url.pathname === '/api/library/books',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'wsd-api-catalog-v1',
+                networkTimeoutSeconds: 4,
+                expiration: {
+                  maxEntries: 5,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin && url.pathname.startsWith('/api/library/cover'),
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'wsd-api-covers-v1',
+                expiration: {
+                  maxEntries: 250,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin && url.pathname.startsWith('/pdfjs/'),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'wsd-pdfjs-assets-v1',
+                expiration: {
+                  maxEntries: 350,
+                  maxAgeSeconds: 60 * 60 * 24 * 90,
+                },
                 cacheableResponse: {
                   statuses: [0, 200],
                 },
@@ -76,6 +122,24 @@ export default defineConfig(() => {
                 cacheName: 'wsd-assets-cache-v2',
                 expiration: {
                   maxEntries: 200,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({sameOrigin, request, url}) =>
+                !sameOrigin &&
+                !url.hostname.includes('supabase') &&
+                (request.destination === 'image' ||
+                  /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(url.pathname)),
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'wsd-remote-covers-v1',
+                expiration: {
+                  maxEntries: 250,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
                 },
                 cacheableResponse: {

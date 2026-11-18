@@ -4,6 +4,44 @@ const IDB_NAME = 'wsd_library_offline_db';
 const IDB_VERSION = 1;
 const IDB_STORE = 'offline_books';
 const BOOKMARKS_PREFIX = 'wsd_library_bookmarks_';
+const CATALOG_CACHE_KEY = 'wsd_library_catalog_cache_v1';
+
+export function getCachedBookCatalog() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(CATALOG_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCachedBookCatalog(books) {
+  if (typeof window === 'undefined' || !Array.isArray(books)) return;
+  try {
+    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(books));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function mergeBooksWithOffline(catalogBooks = [], offlineList = []) {
+  const byKey = new Map();
+  for (const book of Array.isArray(catalogBooks) ? catalogBooks : []) {
+    if (book?.r2_key) byKey.set(book.r2_key, book);
+  }
+  for (const off of Array.isArray(offlineList) ? offlineList : []) {
+    if (!off?.r2_key) continue;
+    const existing = byKey.get(off.r2_key);
+    if (!existing) {
+      byKey.set(off.r2_key, off);
+    } else if (!existing.cover_url && off.cover_url) {
+      byKey.set(off.r2_key, { ...existing, cover_url: off.cover_url });
+    }
+  }
+  return Array.from(byKey.values());
+}
 
 function openLibraryDB() {
   if (typeof window === 'undefined' || !('indexedDB' in window)) {
@@ -119,6 +157,9 @@ async function fetchPdfWithProgress(url, onProgress) {
 }
 
 export async function saveBookOffline(book, onProgress) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Offline — internet connection required to download.');
+  }
   if (typeof window === 'undefined' || !('caches' in window)) {
     throw new Error('Browser does not support Cache Storage.');
   }
@@ -247,4 +288,133 @@ export function toggleBookBookmark(user, r2Key) {
   }
   window.dispatchEvent(new CustomEvent('wsd:library-bookmarks-updated'));
   return next;
+}
+
+async function measureCacheEntries(cacheName) {
+  if (typeof window === 'undefined' || !('caches' in window)) {
+    return { count: 0, bytes: 0 };
+  }
+  try {
+    const has = await window.caches.has(cacheName);
+    if (!has) return { count: 0, bytes: 0 };
+    const cache = await window.caches.open(cacheName);
+    const keys = await cache.keys();
+    let totalBytes = 0;
+    for (const req of keys) {
+      const res = await cache.match(req);
+      if (!res) continue;
+      const lenHeader = Number(res.headers.get('Content-Length') || 0);
+      if (lenHeader > 0) {
+        totalBytes += lenHeader;
+      } else {
+        try {
+          const buf = await res.clone().arrayBuffer();
+          totalBytes += buf.byteLength;
+        } catch {
+          // Ignore opaque response size read error
+        }
+      }
+    }
+    return { count: keys.length, bytes: totalBytes };
+  } catch {
+    return { count: 0, bytes: 0 };
+  }
+}
+
+export async function clearAllDownloadedBooks() {
+  if (typeof window !== 'undefined' && 'caches' in window) {
+    try {
+      await window.caches.delete(CACHE_NAME);
+    } catch {
+      // Ignore cache delete errors
+    }
+  }
+  const db = await openLibraryDB();
+  if (db) {
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('wsd:library-offline-updated'));
+  }
+}
+
+export async function clearCachedBookCoversAndCatalog() {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(CATALOG_CACHE_KEY);
+  } catch {
+    // Ignore storage remove errors
+  }
+  if ('caches' in window) {
+    const tempCaches = [
+      COVER_CACHE_NAME,
+      'wsd-api-covers-v1',
+      'wsd-remote-covers-v1',
+      'wsd-api-catalog-v1',
+    ];
+    for (const name of tempCaches) {
+      try {
+        await window.caches.delete(name);
+      } catch {
+        // Ignore cache delete errors
+      }
+    }
+  }
+  window.dispatchEvent(new CustomEvent('wsd:device-cache-cleared'));
+}
+
+export async function getDeviceStorageSummary() {
+  const downloadedList = await getOfflineBooksMetadata();
+  const pdfCacheStats = await measureCacheEntries(CACHE_NAME);
+
+  const metaBytes = downloadedList.reduce(
+    (sum, item) => sum + Number(item?.file_size || 0),
+    0
+  );
+  const downloadedBooksBytes = Math.max(pdfCacheStats.bytes, metaBytes);
+
+  const tempCacheNames = [
+    COVER_CACHE_NAME,
+    'wsd-api-covers-v1',
+    'wsd-remote-covers-v1',
+    'wsd-api-catalog-v1',
+  ];
+  let tempCacheBytes = 0;
+  let tempCacheCount = 0;
+  for (const name of tempCacheNames) {
+    const stats = await measureCacheEntries(name);
+    tempCacheBytes += stats.bytes;
+    tempCacheCount += stats.count;
+  }
+
+  let browserUsage = null;
+  let browserQuota = null;
+  if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+    try {
+      const est = await navigator.storage.estimate();
+      if (typeof est?.usage === 'number') browserUsage = est.usage;
+      if (typeof est?.quota === 'number') browserQuota = est.quota;
+    } catch {
+      // Ignore storage estimate failure
+    }
+  }
+
+  return {
+    downloadedBooksCount: downloadedList.length,
+    downloadedBooksBytes,
+    tempCacheCount,
+    tempCacheBytes,
+    totalAppManagedBytes: downloadedBooksBytes + tempCacheBytes,
+    browserUsage,
+    browserQuota,
+  };
 }

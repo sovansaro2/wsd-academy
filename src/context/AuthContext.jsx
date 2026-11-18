@@ -85,19 +85,25 @@ export function AuthProvider({ children }) {
           .filter(Boolean)
       );
 
-      // Also check Supabase for existing Student IDs with same DOB prefix
-      if (supabase && isSupabaseConfigured) {
-        const { data: existingRows } = await supabase
-          .from('students')
-          .select('student_id')
-          .ilike('student_id', `${baseStudentId}%`);
+      const isBrowserOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
 
-        if (Array.isArray(existingRows)) {
-          existingRows.forEach((row) => {
-            if (row?.student_id) {
-              takenIds.add(String(row.student_id).toUpperCase());
-            }
-          });
+      // Also check Supabase for existing Student IDs with same DOB prefix when online
+      if (isBrowserOnline && supabase && isSupabaseConfigured) {
+        try {
+          const { data: existingRows } = await supabase
+            .from('students')
+            .select('student_id')
+            .ilike('student_id', `${baseStudentId}%`);
+
+          if (Array.isArray(existingRows)) {
+            existingRows.forEach((row) => {
+              if (row?.student_id) {
+                takenIds.add(String(row.student_id).toUpperCase());
+              }
+            });
+          }
+        } catch {
+          // Proceed with local ID check if offline/network error
         }
       }
 
@@ -112,55 +118,62 @@ export function AuthProvider({ children }) {
         password_hash: hashedPassword,
       };
 
-      // If Supabase is connected, insert into Supabase (retry suffix if rare race collision on student_id)
-      if (supabase && isSupabaseConfigured) {
+      // If Supabase is connected & online, insert into Supabase (retry suffix if rare race collision on student_id)
+      if (isBrowserOnline && supabase && isSupabaseConfigured) {
         let insertedData = null;
         let lastError = null;
 
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          const { data, error } = await supabase
-            .from('students')
-            .insert([
-              {
-                student_id: assignedStudentId,
-                last_name: studentData.last_name.trim(),
-                first_name: studentData.first_name.trim(),
-                gender: studentData.gender,
-                date_of_birth: studentData.date_of_birth,
-                grade: studentData.grade,
-                classroom: studentData.classroom.trim(),
-                address: studentData.address.trim(),
-                email: normalizedEmail,
-                phone: studentData.phone.trim(),
-                telegram: studentData.telegram ? studentData.telegram.trim() : null,
-                password: hashedPassword,
-                role: studentData.role || 'student',
-              },
-            ])
-            .select()
-            .single();
+          try {
+            const { data, error } = await supabase
+              .from('students')
+              .insert([
+                {
+                  student_id: assignedStudentId,
+                  last_name: studentData.last_name.trim(),
+                  first_name: studentData.first_name.trim(),
+                  gender: studentData.gender,
+                  date_of_birth: studentData.date_of_birth,
+                  grade: studentData.grade,
+                  classroom: studentData.classroom.trim(),
+                  address: studentData.address.trim(),
+                  email: normalizedEmail,
+                  phone: studentData.phone.trim(),
+                  telegram: studentData.telegram ? studentData.telegram.trim() : null,
+                  password: hashedPassword,
+                  role: studentData.role || 'student',
+                },
+              ])
+              .select()
+              .single();
 
-          if (!error) {
-            insertedData = data;
-            lastError = null;
-            break;
-          }
+            if (!error) {
+              insertedData = data;
+              lastError = null;
+              break;
+            }
 
-          lastError = error;
-          if (error.code === '23505') {
-            const errText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
-            if (errText.includes('student_id')) {
-              takenIds.add(assignedStudentId.toUpperCase());
-              assignedStudentId = pickNextAvailableStudentId(baseStudentId, takenIds);
-              recordToStore.student_id = assignedStudentId;
-              continue;
+            lastError = error;
+            if (error.code === '23505') {
+              const errText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+              if (errText.includes('student_id')) {
+                takenIds.add(assignedStudentId.toUpperCase());
+                assignedStudentId = pickNextAvailableStudentId(baseStudentId, takenIds);
+                recordToStore.student_id = assignedStudentId;
+                continue;
+              }
+              if (errText.includes('email')) {
+                throw new Error('អ៊ីម៉ែលនេះមានក្នុងប្រព័ន្ធរួចហើយ!');
+              }
+              throw new Error('លេខសម្គាល់សិស្ស ឬ អ៊ីម៉ែលនេះមានក្នុងប្រព័ន្ធរួចហើយ!');
+            } else {
+              console.warn('Supabase insert notice:', error.message);
+              break;
             }
-            if (errText.includes('email')) {
-              throw new Error('អ៊ីម៉ែលនេះមានក្នុងប្រព័ន្ធរួចហើយ!');
+          } catch (insertErr) {
+            if (insertErr?.message?.includes('ប្រព័ន្ធរួចហើយ')) {
+              throw insertErr;
             }
-            throw new Error('លេខសម្គាល់សិស្ស ឬ អ៊ីម៉ែលនេះមានក្នុងប្រព័ន្ធរួចហើយ!');
-          } else {
-            console.warn('Supabase insert notice:', error.message);
             break;
           }
         }
@@ -195,22 +208,29 @@ export function AuthProvider({ children }) {
     try {
       let matchedUser = null;
 
-      // 1. Try querying Supabase if configured
-      if (supabase && isSupabaseConfigured) {
-        const { data, error } = await supabase
-          .from('students')
-          .select('*')
-          .ilike('student_id', cleanId)
-          .maybeSingle();
+      const isBrowserOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
 
-        if (!error && data) {
-          const isValid = await verifyPassword(
-            password,
-            data.password_hash || data.password
-          );
-          if (isValid) {
-            matchedUser = data;
+      // 1. Try querying Supabase if configured and online
+      if (isBrowserOnline && supabase && isSupabaseConfigured) {
+        try {
+          const { data, error } = await supabase
+            .from('students')
+            .select('*')
+            .ilike('student_id', cleanId)
+            .maybeSingle();
+
+          if (!error && data) {
+            const isValid = await verifyPassword(
+              password,
+              data.password_hash || data.password
+            );
+            if (isValid) {
+              matchedUser = data;
+              saveLocalStudent(data);
+            }
           }
+        } catch {
+          // Fall back to local cache seamlessly if offline or request fails
         }
       }
 
@@ -299,26 +319,32 @@ export function AuthProvider({ children }) {
         }
       }
 
-      // 2. Check against Supabase if currentUser password was not in memory or needed fresh verification
-      if (!isOldPasswordValid && supabase && isSupabaseConfigured) {
-        let fetchQuery = supabase.from('students').select('*');
-        if (currentUser.id) {
-          fetchQuery = fetchQuery.eq('id', currentUser.id);
-        } else if (currentUser.student_id) {
-          fetchQuery = fetchQuery.ilike('student_id', currentUser.student_id.trim());
-        } else if (currentUser.email) {
-          fetchQuery = fetchQuery.ilike('email', currentUser.email.trim());
-        }
+      const isBrowserOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
 
-        const { data: dbUser, error: fetchErr } = await fetchQuery.maybeSingle();
-        if (!fetchErr && dbUser) {
-          const isValid = await verifyPassword(
-            oldPassword,
-            dbUser.password_hash || dbUser.password
-          );
-          if (isValid) {
-            isOldPasswordValid = true;
+      // 2. Check against Supabase if online and needed fresh verification
+      if (!isOldPasswordValid && isBrowserOnline && supabase && isSupabaseConfigured) {
+        try {
+          let fetchQuery = supabase.from('students').select('*');
+          if (currentUser.id) {
+            fetchQuery = fetchQuery.eq('id', currentUser.id);
+          } else if (currentUser.student_id) {
+            fetchQuery = fetchQuery.ilike('student_id', currentUser.student_id.trim());
+          } else if (currentUser.email) {
+            fetchQuery = fetchQuery.ilike('email', currentUser.email.trim());
           }
+
+          const { data: dbUser, error: fetchErr } = await fetchQuery.maybeSingle();
+          if (!fetchErr && dbUser) {
+            const isValid = await verifyPassword(
+              oldPassword,
+              dbUser.password_hash || dbUser.password
+            );
+            if (isValid) {
+              isOldPasswordValid = true;
+            }
+          }
+        } catch {
+          // Ignore network error during offline/flaky connection
         }
       }
 
@@ -363,29 +389,33 @@ export function AuthProvider({ children }) {
       // A. Save to local database for immediate offline & persistent fallback
       saveLocalStudent(updatedUser);
 
-      // B. Update in Supabase / Remote Database directly
-      if (supabase && isSupabaseConfigured) {
-        let updateBuilder = supabase
-          .from('students')
-          .update({
-            password: hashedPassword,
-            updated_at: nowIso,
-          });
+      // B. Update in Supabase / Remote Database when online
+      if (isBrowserOnline && supabase && isSupabaseConfigured) {
+        try {
+          let updateBuilder = supabase
+            .from('students')
+            .update({
+              password: hashedPassword,
+              updated_at: nowIso,
+            });
 
-        if (currentUser.id) {
-          updateBuilder = updateBuilder.eq('id', currentUser.id);
-        } else if (currentUser.student_id) {
-          updateBuilder = updateBuilder.eq('student_id', currentUser.student_id.trim());
-        } else if (currentUser.email) {
-          updateBuilder = updateBuilder.eq('email', currentUser.email.trim());
-        }
+          if (currentUser.id) {
+            updateBuilder = updateBuilder.eq('id', currentUser.id);
+          } else if (currentUser.student_id) {
+            updateBuilder = updateBuilder.eq('student_id', currentUser.student_id.trim());
+          } else if (currentUser.email) {
+            updateBuilder = updateBuilder.eq('email', currentUser.email.trim());
+          }
 
-        const { data, error } = await updateBuilder.select();
-        if (error) {
-          console.error('Supabase update error:', error);
-          throw new Error(`បរាជ័យក្នុងការកែប្រែក្នុង Database: ${error.message}`);
-        } else if (data && data.length > 0) {
-          updatedUser.id = data[0].id;
+          const { data, error } = await updateBuilder.select();
+          if (error) {
+            console.warn('Supabase password sync skipped:', error.message);
+          } else if (data && data.length > 0) {
+            updatedUser.id = data[0].id;
+            saveLocalStudent(updatedUser);
+          }
+        } catch {
+          // Offline / network drop: local change already persisted cleanly
         }
       }
 
@@ -417,29 +447,35 @@ export function AuthProvider({ children }) {
       // A. Save to local database
       saveLocalStudent(updatedUser);
 
-      // B. Update in Supabase
-      if (supabase && isSupabaseConfigured) {
-        let updateBuilder = supabase
-          .from('students')
-          .update({
-            ...updates,
-            updated_at: nowIso,
-          });
+      const isBrowserOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
 
-        if (currentUser.id) {
-          updateBuilder = updateBuilder.eq('id', currentUser.id);
-        } else if (currentUser.student_id) {
-          updateBuilder = updateBuilder.eq('student_id', currentUser.student_id.trim());
-        } else if (currentUser.email) {
-          updateBuilder = updateBuilder.eq('email', currentUser.email.trim());
-        }
+      // B. Update in Supabase when online
+      if (isBrowserOnline && supabase && isSupabaseConfigured) {
+        try {
+          let updateBuilder = supabase
+            .from('students')
+            .update({
+              ...updates,
+              updated_at: nowIso,
+            });
 
-        const { data, error } = await updateBuilder.select();
-        if (error) {
-          console.error('Supabase update error:', error);
-          throw new Error(`បរាជ័យក្នុងការកែប្រែក្នុង Database: ${error.message}`);
-        } else if (data && data.length > 0) {
-          updatedUser.id = data[0].id;
+          if (currentUser.id) {
+            updateBuilder = updateBuilder.eq('id', currentUser.id);
+          } else if (currentUser.student_id) {
+            updateBuilder = updateBuilder.eq('student_id', currentUser.student_id.trim());
+          } else if (currentUser.email) {
+            updateBuilder = updateBuilder.eq('email', currentUser.email.trim());
+          }
+
+          const { data, error } = await updateBuilder.select();
+          if (error) {
+            console.warn('Supabase profile sync skipped:', error.message);
+          } else if (data && data.length > 0) {
+            updatedUser.id = data[0].id;
+            saveLocalStudent(updatedUser);
+          }
+        } catch {
+          // Offline / network drop: local profile edit already persisted cleanly
         }
       }
 

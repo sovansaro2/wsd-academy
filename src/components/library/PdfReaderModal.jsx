@@ -7,8 +7,7 @@ import {
   ExternalLink,
   HardDriveDownload,
   Trash2,
-  Loader2,
-  WifiOff,
+  Check,
   ChevronLeft,
   ChevronRight,
   ZoomIn,
@@ -19,8 +18,11 @@ import {
   Sun,
   MoreHorizontal,
 } from 'lucide-react';
+import DotsLoader from '../common/DotsLoader';
 import { formatFileSize, formatGradeLabel, toKhmerNumber } from '../../data/librarySubjects';
 import { openPdfDocument, extractAndStoreBookCover } from '../../utils/pdfClient';
+import { getOfflineBookBlobUrl } from '../../utils/offlineLibrary';
+import { useOnlineStatus } from '../../hooks/usePWA';
 
 const LAST_PAGE_PREFIX = 'wsd_library_last_page_';
 const NIGHT_MODE_KEY = 'wsd_library_reader_night';
@@ -196,7 +198,7 @@ const PdfPageItem = React.memo(function PdfPageItem({
           />
           {!isRendered && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#194350]/85">
-              <Loader2 className="w-5 h-5 animate-spin text-white" />
+              <DotsLoader size="md" color="accent" />
             </div>
           )}
         </>
@@ -223,6 +225,7 @@ export default function PdfReaderModal({
   onRemoveOffline,
   onCoverGenerated,
 }) {
+  const isOnline = useOnlineStatus();
   const viewportRef = useRef(null);
   const moreMenuRef = useRef(null);
   const pageRefs = useRef({});
@@ -566,6 +569,27 @@ export default function PdfReaderModal({
     scrollToPage(pageInput);
   };
 
+  const handleDownloadPdfFile = async (e) => {
+    setIsMoreMenuOpen(false);
+    if (isOfflineSaved && book?.r2_key) {
+      e.preventDefault();
+      const blobUrl = await getOfflineBookBlobUrl(book.r2_key);
+      if (blobUrl) {
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `${book.title}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        return;
+      }
+    }
+    if (!isOnline) {
+      e.preventDefault();
+    }
+  };
+
   const readerModal = (
     <motion.div
       initial={{ opacity: 0 }}
@@ -618,8 +642,8 @@ export default function PdfReaderModal({
                         isNightMode ? 'text-emerald-400' : 'text-emerald-300'
                       }`}
                     >
-                      <WifiOff className="w-3 h-3" />
-                      {isKm ? 'Offline' : 'Offline'}
+                      <Check className="w-3 h-3" />
+                      {isKm ? 'បានទាញយក' : 'Downloaded'}
                     </span>
                   </>
                 )}
@@ -675,16 +699,20 @@ export default function PdfReaderModal({
                     <a
                       href={downloadHref}
                       download={`${book.title}.pdf`}
-                      onClick={() => setIsMoreMenuOpen(false)}
+                      onClick={handleDownloadPdfFile}
                       className={`w-full min-h-[38px] px-3 py-2 rounded-lg flex items-center gap-2.5 text-xs font-medium transition-colors ${
-                        isNightMode ? 'hover:bg-slate-700' : 'hover:bg-white/10'
+                        !isOnline && !isOfflineSaved
+                          ? 'opacity-45 pointer-events-none'
+                          : isNightMode
+                          ? 'hover:bg-slate-700'
+                          : 'hover:bg-white/10'
                       }`}
                     >
                       <Download className="w-4 h-4 opacity-80" />
                       <span>{isKm ? 'ទាញយកឯកសារ PDF' : 'Download PDF'}</span>
                     </a>
 
-                    {externalHref && (
+                    {externalHref && isOnline && (
                       <a
                         href={externalHref}
                         target="_blank"
@@ -719,22 +747,22 @@ export default function PdfReaderModal({
                         }`}
                       >
                         <Trash2 className="w-4 h-4" />
-                        <span>{isKm ? 'លុបចេញពី Offline' : 'Remove Offline Copy'}</span>
+                        <span>{isKm ? 'លុបចេញពីឧបករណ៍' : 'Remove Downloaded Copy'}</span>
                       </button>
                     ) : (
                       <button
                         type="button"
-                        disabled={isDownloadingOffline}
+                        disabled={isDownloadingOffline || !isOnline}
                         onClick={() => {
                           setIsMoreMenuOpen(false);
                           onSaveOffline(book);
                         }}
-                        className={`w-full min-h-[38px] px-3 py-2 rounded-lg flex items-center gap-2.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                        className={`w-full min-h-[38px] px-3 py-2 rounded-lg flex items-center gap-2.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
                           isNightMode ? 'hover:bg-slate-700' : 'hover:bg-white/10'
                         }`}
                       >
                         {isDownloadingOffline ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-white" />
+                          <DotsLoader size="xs" color="accent" />
                         ) : (
                           <HardDriveDownload className="w-4 h-4 opacity-80" />
                         )}
@@ -742,8 +770,8 @@ export default function PdfReaderModal({
                           {isDownloadingOffline
                             ? `${downloadProgress}%`
                             : isKm
-                            ? 'រក្សាទុកអាន Offline'
-                            : 'Save for Offline'}
+                            ? 'ទាញយកទុកក្នុងឧបករណ៍'
+                            : 'Download to Device'}
                         </span>
                       </button>
                     )}
@@ -897,11 +925,11 @@ export default function PdfReaderModal({
         >
           {isLoadingDoc ? (
             <div
-              className={`h-full flex flex-col items-center justify-center gap-2.5 text-sm ${
+              className={`h-full flex flex-col items-center justify-center gap-3.5 text-sm ${
                 isNightMode ? 'text-slate-300' : 'text-white'
               }`}
             >
-              <Loader2 className={`w-7 h-7 animate-spin ${isNightMode ? 'text-white' : 'text-white'}`} />
+              <DotsLoader size="lg" color="accent" />
               <span className="tabular-nums">
                 {loadProgress !== null
                   ? isKm

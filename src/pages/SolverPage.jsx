@@ -1,15 +1,19 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import Card from '../components/common/Card';
 import AuthRequiredBanner from '../components/auth/AuthRequiredBanner';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { Camera, Image as ImageIcon, Send, X, Loader2, AlertCircle, Code, ListTodo, Calculator, Copy, Check, Eraser, FileText, RotateCcw } from 'lucide-react';
+import { useOnlineStatus } from '../hooks/usePWA';
+import { Camera, Image as ImageIcon, Send, X, AlertCircle, Code, ListTodo, Calculator, Copy, Check, Eraser, FileText, RotateCcw, WifiOff, History } from 'lucide-react';
+import DotsLoader from '../components/common/DotsLoader';
 import Markdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { latexToPlainText } from '../utils/mathUtils';
+import { addSolverHistoryItem, hydrateStudyHistoryFromOfflineDB } from '../utils/studyHistory';
 
 const TerminalBox = ({ title, content, icon: Icon }) => {
   const { language } = useLanguage();
@@ -97,7 +101,8 @@ const TerminalBox = ({ title, content, icon: Icon }) => {
 
 export default function SolverPage() {
   const { t, language } = useLanguage();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, currentUser } = useAuth();
+  const isOnline = useOnlineStatus();
   const isKm = language === 'km';
 
   const [text, setText] = useState('');
@@ -108,6 +113,12 @@ export default function SolverPage() {
   const [error, setError] = useState(null);
   const [canRetry, setCanRetry] = useState(false);
   const [detailedCopied, setDetailedCopied] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      hydrateStudyHistoryFromOfflineDB(currentUser);
+    }
+  }, [isAuthenticated, currentUser]);
 
   const handleCopyDetailed = () => {
     if (!result?.detailed_answer) return;
@@ -207,6 +218,13 @@ export default function SolverPage() {
       }
       setResult(data);
       setCanRetry(false);
+      if (data?.is_problem) {
+        addSolverHistoryItem(currentUser, {
+          promptText: text.trim(),
+          hasImage: Boolean(imageFile),
+          result: data,
+        });
+      }
     } catch {
       setCanRetry(true);
       setError(
@@ -230,6 +248,26 @@ export default function SolverPage() {
         />
       ) : (
         <div className="max-w-4xl mx-auto space-y-8 w-full min-w-0">
+          {!isOnline && (
+            <div className="bg-white/[0.05] border border-white/15 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm text-white/85">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <WifiOff className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                <span>
+                  {isKm
+                    ? 'កំពុងស្ថិតក្នុង Offline — ការដោះស្រាយលំហាត់ថ្មីត្រូវការអ៊ីនធឺណិត ប៉ុន្តែអ្នកអាចមើលប្រវត្តិលំហាត់ចាស់ៗបាន។'
+                    : 'You are offline — solving new problems requires internet, but you can review saved history offline.'}
+                </span>
+              </div>
+              <Link
+                to="/history"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] hover:bg-[#38BDF8]/25 font-semibold text-xs whitespace-nowrap transition-colors"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>{isKm ? 'មើលប្រវត្តិ' : 'View History'}</span>
+              </Link>
+            </div>
+          )}
+
           {/* Input Section */}
           <div className="bg-white/[0.05] rounded-2xl border border-white/10 p-4 sm:p-5">
             <div className="flex items-center justify-between mb-3">
@@ -313,7 +351,7 @@ export default function SolverPage() {
                 >
                   {isSubmitting ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <DotsLoader size="xs" color="dark" />
                       <span>{isKm ? 'កំពុងដោះស្រាយ...' : 'Solving...'}</span>
                     </>
                   ) : canRetry ? (

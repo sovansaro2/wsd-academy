@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2 } from 'lucide-react';
+import DotsLoader from './DotsLoader';
 
 /**
  * Reusable Button Component with Light Theme design system & crisp shadows.
@@ -57,7 +57,7 @@ export default function Button({
       {...props}
     >
       {isLoading ? (
-        <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+        <DotsLoader size="xs" color="current" />
       ) : LeftIcon ? (
         <LeftIcon className="h-4 w-4 shrink-0" />
       ) : null}

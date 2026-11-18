@@ -5,24 +5,27 @@ import {
   Tag,
   Link2,
   Send,
-  Loader2,
   CheckCircle2,
   AlertCircle,
   ExternalLink,
   FileUp,
   FileText,
   X,
+  WifiOff,
 } from 'lucide-react';
 import Modal from './Modal';
 import Input from './Input';
+import DotsLoader from './DotsLoader';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
+import { useOnlineStatus } from '../../hooks/usePWA';
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024; // 50 MB Telegram Bot limit
 
 export default function RecommendBookModal({ isOpen, onClose }) {
   const { language } = useLanguage();
   const { currentUser } = useAuth();
+  const isOnline = useOnlineStatus();
   const isKm = language === 'km';
 
   const defaultUserName = currentUser
@@ -137,7 +140,35 @@ export default function RecommendBookModal({ isOpen, onClose }) {
       formData.append('bookCategory', bookCategory.trim());
       formData.append('originalSource', originalSource.trim());
       formData.append('studentId', currentUser?.student_id || '');
-      if (pdfFile) {
+
+      const CHUNK_THRESHOLD = 8 * 1024 * 1024;
+      if (pdfFile && pdfFile.size > CHUNK_THRESHOLD) {
+        const totalChunks = Math.ceil(pdfFile.size / CHUNK_THRESHOLD);
+        let chunkUploadId = '';
+        for (let idx = 0; idx < totalChunks; idx++) {
+          const start = idx * CHUNK_THRESHOLD;
+          const end = Math.min(pdfFile.size, start + CHUNK_THRESHOLD);
+          const slice = pdfFile.slice(start, end);
+          const query = chunkUploadId
+            ? `uploadId=${encodeURIComponent(chunkUploadId)}&chunkIndex=${idx}`
+            : `chunkIndex=${idx}`;
+          const chunkRes = await fetch(`/api/book_recommendation/chunk?${query}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: slice,
+          });
+          const chunkData = await chunkRes.json().catch(() => null);
+          if (!chunkRes.ok || !chunkData?.ok || !chunkData?.uploadId) {
+            throw new Error(
+              chunkData?.error ||
+                (isKm ? 'មានបញ្ហាក្នុងការបញ្ជូនឯកសារ PDF។' : 'Failed to upload PDF chunk.')
+            );
+          }
+          chunkUploadId = chunkData.uploadId;
+        }
+        formData.append('chunkUploadId', chunkUploadId);
+        formData.append('chunkFileName', pdfFile.name || 'book.pdf');
+      } else if (pdfFile) {
         formData.append('pdf', pdfFile);
       }
 
@@ -166,11 +197,12 @@ export default function RecommendBookModal({ isOpen, onClose }) {
       setBookCategory('');
       setOriginalSource('');
       clearPdf();
-    } catch {
+    } catch (err) {
       setError(
-        isKm
-          ? 'មានបញ្ហាក្នុងការបញ្ជូនការណែនាំសៀវភៅ។ សូមព្យាយាមម្ដងទៀត!'
-          : 'Failed to submit book recommendation. Please try again!'
+        err?.message ||
+          (isKm
+            ? 'មានបញ្ហាក្នុងការបញ្ជូនការណែនាំសៀវភៅ។ សូមព្យាយាមម្ដងទៀត!'
+            : 'Failed to submit book recommendation. Please try again!')
       );
     } finally {
       setIsSubmitting(false);
@@ -225,6 +257,17 @@ export default function RecommendBookModal({ isOpen, onClose }) {
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4 font-kh-body">
+          {!isOnline && (
+            <div className="p-3 rounded-xl bg-amber-500/12 border border-amber-400/35 text-amber-200 text-xs sm:text-sm flex items-start gap-2">
+              <WifiOff className="h-4 w-4 shrink-0 mt-0.5 text-amber-300" />
+              <span>
+                {isKm
+                  ? 'កំពុងស្ថិតក្នុង Offline — មុខងារបញ្ជូនសៀវភៅទៅ Telegram ត្រូវការអ៊ីនធឺណិត។'
+                  : 'You are offline — submitting book recommendations requires an internet connection.'}
+              </span>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-400/55 text-rose-200 text-xs sm:text-sm space-y-2">
               <div className="flex items-start gap-2">
@@ -366,12 +409,12 @@ export default function RecommendBookModal({ isOpen, onClose }) {
           <div className="pt-2">
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !isOnline}
               className="w-full inline-flex items-center justify-center font-kh-body font-bold transition-colors duration-150 select-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/40 disabled:opacity-60 disabled:cursor-not-allowed bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] rounded-xl text-sm sm:text-base px-5 py-2.5 gap-2 min-h-[46px]"
             >
               {isSubmitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <DotsLoader size="xs" color="dark" />
                   <span>{isKm ? 'កំពុងបញ្ជូន...' : 'Uploading & Sending...'}</span>
                 </>
               ) : (

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
@@ -9,11 +9,18 @@ import {
   Download,
   HeartHandshake,
   BookPlus,
+  History,
+  BookCheck,
+  Eraser,
+  ShieldCheck,
 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { usePWAInstall } from '../hooks/usePWA';
 import SupportModal from '../components/common/SupportModal';
 import RecommendBookModal from '../components/common/RecommendBookModal';
+import ClearStorageModal from '../components/common/ClearStorageModal';
+import { getOfflineBooksMetadata } from '../utils/offlineLibrary';
+import { toKhmerNumber } from '../data/librarySubjects';
 
 const TILE_CLASSES =
   'bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 rounded-2xl p-5 sm:p-6 min-h-[124px] flex flex-col items-center justify-center text-center gap-3 transition-[transform,background-color,border-color] duration-200 ease-out transform-gpu hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group';
@@ -29,9 +36,40 @@ export default function MorePage() {
   const { isInstallable, isInstalled, install } = usePWAInstall();
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [isRecommendOpen, setIsRecommendOpen] = useState(false);
+  const [isClearStorageOpen, setIsClearStorageOpen] = useState(false);
+  const [downloadedCount, setDownloadedCount] = useState(0);
   const isKm = language === 'km';
 
+  const refreshDownloadedCount = useCallback(async () => {
+    try {
+      const list = await getOfflineBooksMetadata();
+      setDownloadedCount(Array.isArray(list) ? list.length : 0);
+    } catch {
+      setDownloadedCount(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDownloadedCount();
+    const handleUpdate = () => refreshDownloadedCount();
+    window.addEventListener('wsd:library-offline-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('wsd:library-offline-updated', handleUpdate);
+    };
+  }, [refreshDownloadedCount]);
+
   const linkTiles = [
+    {
+      to: '/downloads',
+      icon: BookCheck,
+      label: isKm
+        ? downloadedCount > 0
+          ? `សៀវភៅបានទាញយក (${toKhmerNumber(downloadedCount)})`
+          : 'សៀវភៅបានទាញយក'
+        : downloadedCount > 0
+        ? `Downloaded Books (${downloadedCount})`
+        : 'Downloaded Books',
+    },
     {
       to: '/solver',
       icon: Calculator,
@@ -46,6 +84,16 @@ export default function MorePage() {
       to: '/profile?view=bookmark',
       icon: Bookmark,
       label: isKm ? 'តែងសេចក្ដីរក្សាទុក' : 'Saved Essays',
+    },
+    {
+      to: '/history',
+      icon: History,
+      label: isKm ? 'ប្រវត្តិសិក្សា' : 'Study History',
+    },
+    {
+      to: '/admin',
+      icon: ShieldCheck,
+      label: isKm ? 'ផ្ទាំងគ្រប់គ្រង' : 'Admin Panel',
     },
   ];
 
@@ -109,11 +157,27 @@ export default function MorePage() {
           );
         })}
 
+        {/* Clean Device Storage Tile */}
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={tileTransition(8)}
+          type="button"
+          id="more-clear-storage-btn"
+          onClick={() => setIsClearStorageOpen(true)}
+          className={TILE_CLASSES}
+        >
+          <Eraser className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
+          <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
+            {isKm ? 'សម្អាតទិន្នន័យ' : 'Clean Storage'}
+          </span>
+        </motion.button>
+
         {/* Language Toggle Tile */}
         <motion.button
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={tileTransition(5)}
+          transition={tileTransition(9)}
           type="button"
           onClick={toggleLanguage}
           className={TILE_CLASSES}
@@ -129,7 +193,7 @@ export default function MorePage() {
           <motion.button
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={tileTransition(6)}
+            transition={tileTransition(10)}
             type="button"
             onClick={install}
             className={TILE_CLASSES}
@@ -150,6 +214,11 @@ export default function MorePage() {
       <SupportModal
         isOpen={isSupportOpen}
         onClose={() => setIsSupportOpen(false)}
+      />
+
+      <ClearStorageModal
+        isOpen={isClearStorageOpen}
+        onClose={() => setIsClearStorageOpen(false)}
       />
     </div>
   );

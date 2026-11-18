@@ -10,6 +10,7 @@ import ProfilePage from '../pages/ProfilePage';
 import AdminPage from '../pages/AdminPage';
 import MorePage from '../pages/MorePage';
 import SearchPage from '../pages/SearchPage';
+import DownloadsPage from '../pages/DownloadsPage';
 
 export default function AppRoutes() {
   return (
@@ -21,6 +22,7 @@ export default function AppRoutes() {
           <Route path="/resource" element={<ResourcePage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/library" element={<LibraryPage />} />
+          <Route path="/downloads" element={<DownloadsPage />} />
           <Route path="/more" element={<MorePage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/profile" element={<ProfilePage />} />

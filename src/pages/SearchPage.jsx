@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, LayoutGroup } from 'motion/react';
 import {
   Search as SearchIcon,
@@ -10,13 +10,18 @@ import {
   ArrowRight,
   AlertCircle,
   WifiOff,
+  History,
+  Calculator,
+  PenLine,
 } from 'lucide-react';
 import PdfReaderModal from '../components/library/PdfReaderModal';
+import DotsLoader from '../components/common/DotsLoader';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { useOnlineStatus } from '../hooks/usePWA';
 import {
   formatGradeLabel,
+  formatGradeBadgeNumber,
   formatFileSize,
   toKhmerNumber,
 } from '../data/librarySubjects';
@@ -25,11 +30,19 @@ import {
   saveBookOffline,
   removeBookOffline,
   getCachedCoverBlobUrl,
+  getCachedBookCatalog,
+  saveCachedBookCatalog,
+  mergeBooksWithOffline,
 } from '../utils/offlineLibrary';
 import {
   getSavedEssays,
   hydrateSavedEssaysFromOfflineDB,
 } from '../utils/savedEssays';
+import {
+  getStudyHistory,
+  hydrateStudyHistoryFromOfflineDB,
+} from '../utils/studyHistory';
+import { latexToPlainText } from '../utils/mathUtils';
 import { getGradeLabel } from '../data/essayPresets';
 
 const KHMER_DIGITS_MAP = {
@@ -58,12 +71,26 @@ export default function SearchPage() {
   const isKm = language === 'km';
   const isOnline = useOnlineStatus();
 
-  const [query, setQuery] = useState('');
-  const [scope, setScope] = useState('all'); // 'all' | 'books' | 'essays'
+  const [searchParams] = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get('q') || '');
+  const [scope, setScope] = useState(() => {
+    const s = searchParams.get('scope');
+    return s && ['all', 'books', 'essays', 'history'].includes(s) ? s : 'all';
+  });
+
+  useEffect(() => {
+    const qParam = searchParams.get('q');
+    const sParam = searchParams.get('scope');
+    if (qParam !== null) setQuery(qParam);
+    if (sParam && ['all', 'books', 'essays', 'history'].includes(sParam)) {
+      setScope(sParam);
+    }
+  }, [searchParams]);
   const [books, setBooks] = useState([]);
   const [isLoadingBooks, setIsLoadingBooks] = useState(true);
   const [offlineMap, setOfflineMap] = useState(() => new Map());
   const [savedEssays, setSavedEssays] = useState(() => getSavedEssays(currentUser));
+  const [historyItems, setHistoryItems] = useState(() => getStudyHistory(currentUser));
 
   const [localCovers, setLocalCovers] = useState({});
   const [coverErrors, setCoverErrors] = useState({});
@@ -96,6 +123,16 @@ export default function SearchPage() {
   }, [currentUser]);
 
   useEffect(() => {
+    const syncHistory = () => setHistoryItems(getStudyHistory(currentUser));
+    syncHistory();
+    hydrateStudyHistoryFromOfflineDB(currentUser).then((merged) => {
+      if (Array.isArray(merged)) setHistoryItems(merged);
+    });
+    window.addEventListener('wsd:study-history-updated', syncHistory);
+    return () => window.removeEventListener('wsd:study-history-updated', syncHistory);
+  }, [currentUser]);
+
+  useEffect(() => {
     syncOfflineState();
     const onOfflineChange = () => syncOfflineState();
     window.addEventListener('wsd:library-offline-updated', onOfflineChange);
@@ -106,12 +143,20 @@ export default function SearchPage() {
     let cancelled = false;
 
     const loadBooks = async () => {
-      setIsLoadingBooks(true);
       const offlineList = await syncOfflineState();
+      const cachedCatalog = getCachedBookCatalog();
+      const cachedMerged = mergeBooksWithOffline(cachedCatalog, offlineList);
+
+      if (cachedMerged.length > 0 && !cancelled) {
+        setBooks(cachedMerged);
+        setIsLoadingBooks(false);
+      } else {
+        setIsLoadingBooks(true);
+      }
 
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         if (!cancelled) {
-          setBooks(offlineList);
+          setBooks(cachedMerged);
           setIsLoadingBooks(false);
         }
         return;
@@ -122,15 +167,11 @@ export default function SearchPage() {
         if (!res.ok) throw new Error('Failed to load books');
         const data = await res.json();
         const fetched = Array.isArray(data.books) ? data.books : [];
-        const byKey = new Map(fetched.map((b) => [b.r2_key, b]));
-        for (const off of offlineList) {
-          if (off?.r2_key && !byKey.has(off.r2_key)) {
-            byKey.set(off.r2_key, off);
-          }
-        }
-        if (!cancelled) setBooks(Array.from(byKey.values()));
+        saveCachedBookCatalog(fetched);
+        const merged = mergeBooksWithOffline(fetched, offlineList);
+        if (!cancelled) setBooks(merged);
       } catch {
-        if (!cancelled) setBooks(offlineList);
+        if (!cancelled) setBooks(cachedMerged);
       } finally {
         if (!cancelled) setIsLoadingBooks(false);
       }
@@ -183,6 +224,22 @@ export default function SearchPage() {
       return hay.includes(normalizedQuery);
     });
   }, [savedEssays, normalizedQuery, isAuthenticated, isKm]);
+
+  const matchedHistory = useMemo(() => {
+    if (!normalizedQuery || !isAuthenticated) return [];
+    return historyItems.filter((item) => {
+      if (item.kind === 'solver') {
+        const hay = normalizeSearchText(
+          `${item.promptText || ''} ${latexToPlainText(item.result?.short_answer || '')} ${latexToPlainText(item.result?.detailed_answer || '')}`
+        );
+        return hay.includes(normalizedQuery);
+      }
+      const hay = normalizeSearchText(
+        `${item.promptText || ''} ${item.result?.detected_topic || ''} ${item.result?.essay_type_label || ''} ${getGradeLabel(item.grade, isKm)}`
+      );
+      return hay.includes(normalizedQuery);
+    });
+  }, [historyItems, normalizedQuery, isAuthenticated, isKm]);
 
   // Hydrate cached covers for matching books
   useEffect(() => {
@@ -281,7 +338,7 @@ export default function SearchPage() {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setActionError(
         isKm
-          ? `គ្មានអ៊ីនធឺណិតទេ — សៀវភៅ «${book.title}» មិនទាន់បានទាញយកទុក Offline នៅឡើយទេ។`
+          ? `គ្មានអ៊ីនធឺណិតទេ — សៀវភៅ «${book.title}» មិនទាន់បានទាញយកនៅឡើយទេ។`
           : `You are offline — "${book.title}" has not been downloaded yet.`
       );
       return;
@@ -304,10 +361,12 @@ export default function SearchPage() {
 
   const showBooksSection = scope === 'all' || scope === 'books';
   const showEssaysSection = isAuthenticated && (scope === 'all' || scope === 'essays');
+  const showHistorySection = isAuthenticated && (scope === 'all' || scope === 'history');
 
   const visibleBooks = showBooksSection ? matchedBooks : [];
   const visibleEssays = showEssaysSection ? matchedEssays : [];
-  const totalResults = visibleBooks.length + visibleEssays.length;
+  const visibleHistory = showHistorySection ? matchedHistory : [];
+  const totalResults = visibleBooks.length + visibleEssays.length + visibleHistory.length;
 
   return (
     <div id="search-page" className="space-y-5 font-kh-body pb-10">
@@ -320,7 +379,7 @@ export default function SearchPage() {
           {!isOnline && (
             <span className="inline-flex items-center gap-1.5 text-xs text-[#38BDF8] font-medium">
               <WifiOff className="w-3.5 h-3.5" />
-              {isKm ? 'Offline' : 'Offline'}
+              {isKm ? 'គ្មានអ៊ីនធឺណិត' : 'Offline'}
             </span>
           )}
         </div>
@@ -358,11 +417,12 @@ export default function SearchPage() {
         {/* Scope Switcher */}
         {isAuthenticated && (
           <LayoutGroup id="search-scope">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
               {[
                 { id: 'all', label: isKm ? 'ទាំងអស់' : 'All' },
                 { id: 'books', label: isKm ? 'សៀវភៅ' : 'Books' },
                 { id: 'essays', label: isKm ? 'តែងសេចក្ដីរក្សាទុក' : 'Saved Essays' },
+                { id: 'history', label: isKm ? 'ប្រវត្តិសិក្សា' : 'History' },
               ].map((tab) => {
                 const isActive = scope === tab.id;
                 return (
@@ -370,7 +430,7 @@ export default function SearchPage() {
                     key={tab.id}
                     type="button"
                     onClick={() => setScope(tab.id)}
-                    className={`relative px-3.5 py-1.5 rounded-xl text-xs font-medium transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                    className={`relative px-3.5 py-1.5 rounded-xl text-xs font-medium transition-colors duration-200 cursor-pointer whitespace-nowrap shrink-0 ${
                       isActive
                         ? 'text-[#38BDF8] font-semibold'
                         : 'bg-white/[0.05] text-white/70 hover:text-white hover:bg-white/[0.09]'
@@ -449,13 +509,23 @@ export default function SearchPage() {
           </p>
         </section>
       ) : isLoadingBooks && books.length === 0 ? (
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4 pt-2">
-          {Array.from({ length: 4 }).map((_, idx) => (
-            <div key={idx} className="space-y-2 animate-pulse">
-              <div className="w-full aspect-[3/4] rounded-xl bg-white/[0.06] border border-white/10" />
-              <div className="h-3 w-3/4 rounded bg-white/[0.08]" />
-            </div>
-          ))}
+        <div className="space-y-4 pt-2">
+          <div className="flex items-center justify-center py-1">
+            <DotsLoader
+              size="sm"
+              color="accent"
+              label={isKm ? 'កំពុងស្វែងរកសៀវភៅ...' : 'Loading catalog...'}
+              className="text-xs text-white/70"
+            />
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <div key={idx} className="space-y-2 animate-pulse">
+                <div className="w-full aspect-[3/4] rounded-xl bg-white/[0.06] border border-white/10" />
+                <div className="h-3 w-3/4 rounded bg-white/[0.08]" />
+              </div>
+            ))}
+          </div>
         </div>
       ) : totalResults === 0 ? (
         <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-10 text-center space-y-2">
@@ -524,8 +594,8 @@ export default function SearchPage() {
                               <span className="text-[10px] font-medium text-white/75 truncate">
                                 {book.subject_label}
                               </span>
-                              <span className="font-kh-title text-sm leading-none tabular-nums text-white shrink-0">
-                                {toKhmerNumber(book.grade)}
+                              <span className="font-kh-title text-xs sm:text-sm leading-none tabular-nums text-white shrink-0">
+                                {formatGradeBadgeNumber(book.grade, isKm)}
                               </span>
                             </div>
                             <div className="my-auto flex flex-col items-center justify-center text-center gap-1.5">
@@ -586,12 +656,17 @@ export default function SearchPage() {
                           <span className="truncate">
                             {formatGradeLabel(book.grade, isKm)} · {formatFileSize(book.file_size)}
                           </span>
-                          {isSavedOffline && !isDownloading && (
+                          {isSavedOffline && !isDownloading ? (
                             <Check
                               className="w-3.5 h-3.5 text-emerald-300 shrink-0"
-                              aria-label={isKm ? 'បានរក្សាទុក Offline' : 'Saved offline'}
+                              aria-label={isKm ? 'បានទាញយក' : 'Downloaded'}
                             />
-                          )}
+                          ) : !isOnline && !isDownloading ? (
+                            <WifiOff
+                              className="w-3 h-3 text-white/40 shrink-0"
+                              aria-label={isKm ? 'ត្រូវការអ៊ីនធឺណិតដើម្បីទាញយក' : 'Internet required to download'}
+                            />
+                          ) : null}
                         </div>
                       </div>
                     </article>
@@ -634,6 +709,60 @@ export default function SearchPage() {
                           ? ` · ${isKm ? `${toKhmerNumber(item.wordCount)} ពាក្យ` : `${item.wordCount} words`}`
                           : ''}
                       </p>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-white/40 group-hover:text-[#38BDF8] shrink-0 transition-colors" />
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Matched Study History */}
+          {visibleHistory.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-kh-title text-base sm:text-lg text-white flex items-center gap-2">
+                  <History className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                  <span>{isKm ? 'ប្រវត្តិដោះស្រាយ & តែងសេចក្ដី' : 'Study History'}</span>
+                </h2>
+                <span className="text-xs text-white/65 tabular-nums">
+                  {isKm
+                    ? `${toKhmerNumber(visibleHistory.length)} ធាតុ`
+                    : `${visibleHistory.length} found`}
+                </span>
+              </div>
+
+              <div className="bg-white/[0.05] border border-white/10 rounded-2xl divide-y divide-white/10 overflow-hidden">
+                {visibleHistory.map((item) => (
+                  <Link
+                    key={item.id}
+                    to={`/history?item=${encodeURIComponent(item.id)}`}
+                    className="p-4 flex items-center justify-between gap-3 hover:bg-white/[0.05] transition-colors group"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-[#38BDF8]/12 text-[#38BDF8] flex items-center justify-center shrink-0">
+                        {item.kind === 'solver' ? (
+                          <Calculator className="w-4 h-4" />
+                        ) : (
+                          <PenLine className="w-4 h-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="text-sm font-semibold text-white line-clamp-1 group-hover:underline">
+                          {item.kind === 'solver'
+                            ? item.promptText || (isKm ? 'លំហាត់ពីរូបភាព' : 'Photo Exercise')
+                            : item.result?.detected_topic || item.promptText}
+                        </p>
+                        <p className="text-xs text-white/65 truncate">
+                          {item.kind === 'solver'
+                            ? isKm
+                              ? 'ដោះស្រាយលំហាត់'
+                              : 'Problem Solver'
+                            : `${isKm ? 'តែងសេចក្ដី' : 'Essay'}${
+                                item.result?.essay_type_label ? ` · ${item.result.essay_type_label}` : ''
+                              }`}
+                        </p>
+                      </div>
                     </div>
                     <ArrowRight className="w-4 h-4 text-white/40 group-hover:text-[#38BDF8] shrink-0 transition-colors" />
                   </Link>

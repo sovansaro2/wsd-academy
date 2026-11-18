@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ShieldCheck,
   Users,
@@ -12,7 +12,6 @@ import {
   Search,
   Wifi,
   WifiOff,
-  Loader2,
   Library,
   Upload,
   Trash2,
@@ -23,6 +22,7 @@ import {
 } from 'lucide-react';
 import Card from '../components/common/Card';
 import Button from '../components/common/Button';
+import DotsLoader from '../components/common/DotsLoader';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -84,6 +84,22 @@ function getLocalStorageKb() {
   }
 }
 
+const R2_MULTIPART_PART_SIZE = 8 * 1024 * 1024; // 8 MB (>= 5 MB S3/R2 minimum and < 32 MB Cloud Run limit)
+const MAX_LIBRARY_PDF_BYTES = 500 * 1024 * 1024;
+
+async function parseResponseJsonSafely(res) {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (res.status === 413) {
+      return { error: 'ទំហំសំណើធំពេក (413)។ សូមព្យាយាមម្ដងទៀត!' };
+    }
+    return { error: text.slice(0, 180) };
+  }
+}
+
 export default function AdminPage() {
   const { t, language } = useLanguage();
   const { currentUser, isAuthenticated, isAdmin, setIsLoginOpen } = useAuth();
@@ -109,6 +125,8 @@ export default function AdminPage() {
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadFile, setUploadFile] = useState(null);
   const [isUploadingBook, setIsUploadingBook] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const uploadFileInputRef = useRef(null);
   const [deletingKey, setDeletingKey] = useState(null);
   const [isGeneratingCovers, setIsGeneratingCovers] = useState(false);
   const [coverGenProgress, setCoverGenProgress] = useState({ done: 0, total: 0 });
@@ -275,27 +293,171 @@ export default function AdminPage() {
       });
       return;
     }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setLibraryFeedback({
+        type: 'error',
+        message: isKm
+          ? 'គ្មានអ៊ីនធឺណិត — សូមភ្ជាប់អ៊ីនធឺណិតដើម្បី Upload សៀវភៅ។'
+          : 'Offline — please reconnect to upload books.',
+      });
+      return;
+    }
+
+    const isPdfExt = /\.pdf$/i.test(uploadFile.name || '');
+    const isPdfMime = uploadFile.type === 'application/pdf';
+    if (!isPdfExt && !isPdfMime) {
+      setLibraryFeedback({
+        type: 'error',
+        message: isKm ? 'អនុញ្ញាតតែឯកសារ PDF ប៉ុណ្ណោះ។' : 'Only PDF files are allowed.',
+      });
+      return;
+    }
+
+    if (uploadFile.size <= 0 || uploadFile.size > MAX_LIBRARY_PDF_BYTES) {
+      setLibraryFeedback({
+        type: 'error',
+        message: isKm
+          ? 'ទំហំឯកសារ PDF មិនត្រឹមត្រូវ ឬលើសពី 500MB។'
+          : 'PDF file size is invalid or exceeds 500MB.',
+      });
+      return;
+    }
+
+    const selectedFile = uploadFile;
+    const selectedFileName = selectedFile.name || 'book.pdf';
+    const trimmedTitle = uploadTitle.trim();
+
     setIsUploadingBook(true);
     setLibraryFeedback(null);
+    setUploadProgress({
+      loadedBytes: 0,
+      totalBytes: selectedFile.size,
+      percent: 0,
+      stage: 'uploading',
+    });
+
+    let activeMultipart = null;
+
     try {
-      const formData = new FormData();
-      formData.append('file', uploadFile);
-      formData.append('grade', uploadGrade);
-      if (uploadTitle.trim()) {
-        formData.append('title', uploadTitle.trim());
+      let data = null;
+
+      if (selectedFile.size <= R2_MULTIPART_PART_SIZE) {
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('grade', uploadGrade);
+        if (trimmedTitle) {
+          formData.append('title', trimmedTitle);
+        }
+        const res = await fetch('/api/library/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        data = await parseResponseJsonSafely(res);
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.error || 'Upload failed');
+        }
+        setUploadProgress({
+          loadedBytes: selectedFile.size,
+          totalBytes: selectedFile.size,
+          percent: 100,
+          stage: 'cover',
+        });
+      } else {
+        // Chunked R2 multipart upload (each part = 8MB so Cloud Run 32MB limit is never hit)
+        const initRes = await fetch('/api/library/upload/init', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: selectedFileName,
+            grade: uploadGrade,
+            title: trimmedTitle,
+            contentType: selectedFile.type || 'application/pdf',
+            fileSize: selectedFile.size,
+          }),
+        });
+        const initData = await parseResponseJsonSafely(initRes);
+        if (!initRes.ok || !initData?.ok || !initData?.uploadId || !initData?.key) {
+          throw new Error(initData?.error || 'Could not initialize upload');
+        }
+
+        activeMultipart = { uploadId: initData.uploadId, key: initData.key };
+        const totalParts = Math.ceil(selectedFile.size / R2_MULTIPART_PART_SIZE);
+        const uploadedParts = [];
+
+        for (let partIndex = 0; partIndex < totalParts; partIndex++) {
+          const partNumber = partIndex + 1;
+          const start = partIndex * R2_MULTIPART_PART_SIZE;
+          const end = Math.min(selectedFile.size, start + R2_MULTIPART_PART_SIZE);
+          const chunk = selectedFile.slice(start, end);
+
+          let partData = null;
+          let lastPartErr = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const partRes = await fetch(
+                `/api/library/upload/part?uploadId=${encodeURIComponent(
+                  activeMultipart.uploadId
+                )}&key=${encodeURIComponent(activeMultipart.key)}&partNumber=${partNumber}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/octet-stream' },
+                  body: chunk,
+                }
+              );
+              const parsed = await parseResponseJsonSafely(partRes);
+              if (!partRes.ok || !parsed?.ok || !parsed?.ETag) {
+                throw new Error(parsed?.error || `Failed to upload part ${partNumber}`);
+              }
+              partData = parsed;
+              break;
+            } catch (err) {
+              lastPartErr = err;
+            }
+          }
+
+          if (!partData) {
+            throw lastPartErr || new Error(`Failed to upload part ${partNumber}`);
+          }
+
+          uploadedParts.push({ PartNumber: partNumber, ETag: partData.ETag });
+          setUploadProgress({
+            loadedBytes: end,
+            totalBytes: selectedFile.size,
+            percent: Math.min(99, Math.round((end / selectedFile.size) * 100)),
+            stage: 'uploading',
+          });
+        }
+
+        const completeRes = await fetch('/api/library/upload/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uploadId: activeMultipart.uploadId,
+            key: activeMultipart.key,
+            grade: uploadGrade,
+            title: trimmedTitle,
+            fileSize: selectedFile.size,
+            parts: uploadedParts,
+          }),
+        });
+        data = await parseResponseJsonSafely(completeRes);
+        if (!completeRes.ok || !data?.ok) {
+          throw new Error(data?.error || 'Failed to finalize book upload');
+        }
+        activeMultipart = null;
+        setUploadProgress({
+          loadedBytes: selectedFile.size,
+          totalBytes: selectedFile.size,
+          percent: 100,
+          stage: 'cover',
+        });
       }
-      const res = await fetch('/api/library/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Upload failed');
-      }
+
       // Auto-extract Page 1 cover from the selected local PDF file and upload to R2
-      if (data.book?.r2_key) {
+      if (data?.book?.r2_key) {
         try {
-          const coverBlob = await extractCoverBlobFromFile(uploadFile, 380);
+          const coverBlob = await extractCoverBlobFromFile(selectedFile, 380);
           if (coverBlob) {
             await uploadBookCoverBlob(data.book.r2_key, coverBlob);
           }
@@ -304,22 +466,34 @@ export default function AdminPage() {
         }
       }
 
+      setUploadProgress((prev) => (prev ? { ...prev, stage: 'refreshing' } : null));
       setUploadTitle('');
       setUploadFile(null);
+      if (uploadFileInputRef.current) {
+        uploadFileInputRef.current.value = '';
+      }
       await loadRealData();
       setLibraryFeedback({
         type: 'success',
         message: isKm
-          ? `បានបញ្ជូន «${data.book?.title || uploadFile.name}» ទៅ R2 រួចរាល់។`
-          : `Uploaded "${data.book?.title || uploadFile.name}" to R2.`,
+          ? `បានបញ្ជូន «${data?.book?.title || selectedFileName}» ទៅ R2 រួចរាល់។`
+          : `Uploaded "${data?.book?.title || selectedFileName}" to R2.`,
       });
     } catch (err) {
+      if (activeMultipart) {
+        fetch('/api/library/upload/abort', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(activeMultipart),
+        }).catch(() => {});
+      }
       setLibraryFeedback({
         type: 'error',
         message: err?.message || (isKm ? 'មិនអាចបញ្ជូនឯកសារបានទេ។' : 'Upload failed.'),
       });
     } finally {
       setIsUploadingBook(false);
+      setUploadProgress(null);
     }
   };
 
@@ -496,7 +670,7 @@ export default function AdminPage() {
           className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-white/[0.08] hover:bg-white/15 rounded-xl transition-colors self-start sm:self-center cursor-pointer disabled:opacity-60"
         >
           {isLoadingData ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+            <DotsLoader size="xs" color="white" />
           ) : (
             <RefreshCw className="w-3.5 h-3.5 text-white" />
           )}
@@ -698,7 +872,7 @@ export default function AdminPage() {
                 >
                   {isGeneratingCovers ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                      <DotsLoader size="xs" color="white" />
                       <span className="tabular-nums">
                         {isKm
                           ? `កំពុងបង្កើតក្រប (${coverGenProgress.done}/${coverGenProgress.total})`
@@ -720,7 +894,7 @@ export default function AdminPage() {
                   className="min-h-[38px] inline-flex items-center gap-2 px-4 py-2 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] text-xs font-bold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
                 >
                   {isSyncingLibrary ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <DotsLoader size="xs" color="dark" />
                   ) : (
                     <RefreshCw className="w-3.5 h-3.5" />
                   )}
@@ -732,7 +906,7 @@ export default function AdminPage() {
             <form onSubmit={handleUploadLibraryBook} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
               <div className="sm:col-span-3 space-y-1">
                 <label className="block text-xs font-medium text-white/80">
-                  {isKm ? 'ថ្នាក់' : 'Grade'}
+                  {isKm ? 'ថ្នាក់ / អាល់ប៊ុម' : 'Grade / Album'}
                 </label>
                 <select
                   value={uploadGrade}
@@ -744,6 +918,9 @@ export default function AdminPage() {
                       {formatGradeLabel(g, isKm)}
                     </option>
                   ))}
+                  <option value="0">
+                    {isKm ? 'ចំណេះដឹងទូទៅ (សៀវភៅផ្សេងៗ)' : 'General Knowledge (Other Books)'}
+                  </option>
                 </select>
               </div>
 
@@ -765,6 +942,7 @@ export default function AdminPage() {
                   {isKm ? 'ឯកសារ PDF' : 'PDF File'}
                 </label>
                 <input
+                  ref={uploadFileInputRef}
                   type="file"
                   accept="application/pdf,.pdf"
                   onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
@@ -775,18 +953,51 @@ export default function AdminPage() {
               <div className="sm:col-span-2">
                 <button
                   type="submit"
-                  disabled={isUploadingBook || !libraryConfigured || !uploadFile}
+                  disabled={isUploadingBook || !libraryConfigured || !uploadFile || !isOnline}
                   className="w-full min-h-[40px] inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] text-xs font-bold rounded-xl transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
                 >
                   {isUploadingBook ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <DotsLoader size="xs" color="dark" />
                   ) : (
                     <Upload className="w-3.5 h-3.5" />
                   )}
-                  <span>{isKm ? 'Upload' : 'Upload'}</span>
+                  <span>
+                    {isUploadingBook && uploadProgress
+                      ? `${uploadProgress.percent}%`
+                      : 'Upload'}
+                  </span>
                 </button>
               </div>
             </form>
+
+            {isUploadingBook && uploadProgress && (
+              <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-white/80 tabular-nums">
+                  <span>
+                    {uploadProgress.stage === 'cover'
+                      ? isKm
+                        ? 'កំពុងបង្កើតរូបក្របសៀវភៅ...'
+                        : 'Generating book cover...'
+                      : uploadProgress.stage === 'refreshing'
+                      ? isKm
+                        ? 'កំពុងធ្វើបច្ចុប្បន្នភាពបញ្ជី...'
+                        : 'Refreshing library...'
+                      : isKm
+                      ? 'កំពុង Upload ឯកសារ PDF...'
+                      : 'Uploading PDF...'}
+                  </span>
+                  <span>
+                    {formatFileSize(uploadProgress.loadedBytes)} / {formatFileSize(uploadProgress.totalBytes)} ({uploadProgress.percent}%)
+                  </span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-[#38BDF8] transition-all duration-200"
+                    style={{ width: `${uploadProgress.percent}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* Books Table */}
@@ -876,7 +1087,7 @@ export default function AdminPage() {
                                 title={isKm ? 'លុប' : 'Delete'}
                               >
                                 {deletingKey === book.r2_key ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  <DotsLoader size="xs" color="accent" />
                                 ) : (
                                   <Trash2 className="w-4 h-4" />
                                 )}

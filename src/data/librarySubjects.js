@@ -3,6 +3,7 @@ export const LIBRARY_LEVELS = [
   { id: 'primary', labelKm: 'បឋម (៤–៦)', labelEn: 'Primary (4–6)' },
   { id: 'lower_secondary', labelKm: 'អនុវិទ្យាល័យ (៧–៩)', labelEn: 'Lower Sec (7–9)' },
   { id: 'upper_secondary', labelKm: 'វិទ្យាល័យ (១០–១២)', labelEn: 'Upper Sec (10–12)' },
+  { id: 'general_knowledge', labelKm: 'ចំណេះដឹងទូទៅ', labelEn: 'General Knowledge' },
 ];
 
 export const LIBRARY_GRADES = [4, 5, 6, 7, 8, 9, 10, 11, 12];
@@ -25,6 +26,7 @@ export const SUBJECT_COVER_THEMES = {
   ict: { accent: '#FFFFFF', tint: 'transparent', labelKm: 'ព័ត៌មានវិទ្យា', labelEn: 'ICT' },
   home_economics: { accent: '#FFFFFF', tint: 'transparent', labelKm: 'គេហវិទ្យា', labelEn: 'Home Economics' },
   general: { accent: '#FFFFFF', tint: 'transparent', labelKm: 'សៀវភៅសិក្សា', labelEn: 'Textbook' },
+  general_knowledge: { accent: '#38BDF8', tint: 'transparent', labelKm: 'ចំណេះដឹងទូទៅ', labelEn: 'General Knowledge' },
 };
 
 const KHMER_NUMERALS = ['០', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
@@ -37,7 +39,17 @@ export function toKhmerNumber(num) {
 }
 
 export function formatGradeLabel(grade, isKm = true) {
+  if (Number(grade) === 0 || grade === 'general_knowledge') {
+    return isKm ? 'ចំណេះដឹងទូទៅ' : 'General Knowledge';
+  }
   return isKm ? `ថ្នាក់ទី ${toKhmerNumber(grade)}` : `Grade ${grade}`;
+}
+
+export function formatGradeBadgeNumber(grade, isKm = true) {
+  if (Number(grade) === 0 || grade === 'general_knowledge') {
+    return isKm ? 'ទូទៅ' : 'GK';
+  }
+  return toKhmerNumber(grade);
 }
 
 export function formatFileSize(bytes) {

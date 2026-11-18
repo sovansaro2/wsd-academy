@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, UserPlus, LogIn, Sparkles, BookOpen } from 'lucide-react';
+import { ShieldAlert, UserPlus, LogIn } from 'lucide-react';
 import Button from '../common/Button';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';

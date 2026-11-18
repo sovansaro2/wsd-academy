@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import Card from '../components/common/Card';
 import Button from '../components/common/Button';
+import DotsLoader from '../components/common/DotsLoader';
 import DobPicker from '../components/common/DobPicker';
 import ImageCropperModal from '../components/common/ImageCropperModal';
 import SavedEssaysView from '../components/essay/SavedEssaysView';
@@ -660,9 +661,9 @@ export default function ProfilePage() {
                     <button
                       type="submit"
                       disabled={isSubmittingProfile}
-                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer"
+                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer inline-flex items-center justify-center min-w-[100px]"
                     >
-                      {isSubmittingProfile ? '...' : (isKm ? 'រក្សាទុក' : 'Save')}
+                      {isSubmittingProfile ? <DotsLoader size="xs" color="dark" /> : (isKm ? 'រក្សាទុក' : 'Save')}
                     </button>
                   </div>
                 </form>
@@ -850,9 +851,9 @@ export default function ProfilePage() {
                     <button
                       type="submit"
                       disabled={isSubmittingPassword}
-                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer"
+                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer inline-flex items-center justify-center min-w-[100px]"
                     >
-                      {isSubmittingPassword ? '...' : (isKm ? 'បញ្ជូន' : 'Submit')}
+                      {isSubmittingPassword ? <DotsLoader size="xs" color="dark" /> : (isKm ? 'បញ្ជូន' : 'Submit')}
                     </button>
                   </div>
                 </form>
@@ -904,9 +905,9 @@ export default function ProfilePage() {
                     <button
                       type="submit"
                       disabled={isSubmittingPhone}
-                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer"
+                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer inline-flex items-center justify-center min-w-[100px]"
                     >
-                      {isSubmittingPhone ? '...' : (isKm ? 'បញ្ជូន' : 'Submit')}
+                      {isSubmittingPhone ? <DotsLoader size="xs" color="dark" /> : (isKm ? 'បញ្ជូន' : 'Submit')}
                     </button>
                   </div>
                 </form>
@@ -958,9 +959,9 @@ export default function ProfilePage() {
                     <button
                       type="submit"
                       disabled={isSubmittingEmail}
-                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer"
+                      className="px-6 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] font-bold rounded-full transition disabled:opacity-50 uppercase text-sm tracking-wide cursor-pointer inline-flex items-center justify-center min-w-[100px]"
                     >
-                      {isSubmittingEmail ? '...' : (isKm ? 'បញ្ជូន' : 'Submit')}
+                      {isSubmittingEmail ? <DotsLoader size="xs" color="dark" /> : (isKm ? 'បញ្ជូន' : 'Submit')}
                     </button>
                   </div>
                 </form>

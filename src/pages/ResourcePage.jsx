@@ -7,7 +7,6 @@ import {
   Image as ImageIcon,
   Send,
   X,
-  Loader2,
   AlertCircle,
   Copy,
   Check,
@@ -20,11 +19,15 @@ import {
   Bookmark,
   BookmarkCheck,
   StickyNote,
+  WifiOff,
+  History,
 } from 'lucide-react';
+import DotsLoader from '../components/common/DotsLoader';
 import AuthRequiredBanner from '../components/auth/AuthRequiredBanner';
 import SaveEssayModal from '../components/essay/SaveEssayModal';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import { useOnlineStatus } from '../hooks/usePWA';
 import {
   GRADE_LEVEL_GROUPS,
   ESSAY_LENGTH_OPTIONS,
@@ -41,10 +44,15 @@ import {
   saveEssayItem,
   deleteSavedEssay,
 } from '../utils/savedEssays';
+import {
+  addEssayHistoryItem,
+  hydrateStudyHistoryFromOfflineDB,
+} from '../utils/studyHistory';
 
 export default function ResourcePage() {
   const { language } = useLanguage();
   const { isAuthenticated, currentUser } = useAuth();
+  const isOnline = useOnlineStatus();
   const isKm = language === 'km';
 
   const [topic, setTopic] = useState('');
@@ -76,6 +84,7 @@ export default function ResourcePage() {
 
   useEffect(() => {
     hydrateSavedEssaysFromOfflineDB(currentUser);
+    hydrateStudyHistoryFromOfflineDB(currentUser);
   }, [currentUser]);
 
   useEffect(() => {
@@ -243,6 +252,14 @@ export default function ResourcePage() {
       setResultGrade(grade);
       setActiveTab('outline');
       setCanRetry(false);
+      if (data?.is_valid_topic) {
+        addEssayHistoryItem(currentUser, {
+          promptText: topic.trim(),
+          hasImage: Boolean(imageFile),
+          grade,
+          result: data,
+        });
+      }
     } catch {
       setCanRetry(true);
       setError(
@@ -321,6 +338,35 @@ export default function ResourcePage() {
               <ChevronDown className="w-4 h-4 text-white/80 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
             </div>
           </div>
+
+          {!isOnline && (
+            <div className="bg-white/[0.05] border border-white/15 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm text-white/85">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <WifiOff className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                <span>
+                  {isKm
+                    ? 'កំពុងស្ថិតក្នុង Offline — ការបង្កើតសំណេរថ្មីត្រូវការអ៊ីនធឺណិត ប៉ុន្តែអ្នកអាចអានអត្ថបទដែលបានរក្សាទុក និងប្រវត្តិបាន។'
+                    : 'Offline — generating new essays requires internet, but saved essays and history remain available.'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Link
+                  to="/profile?view=bookmark"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] hover:bg-[#38BDF8]/25 font-semibold text-xs whitespace-nowrap transition-colors"
+                >
+                  <Bookmark className="w-3.5 h-3.5" />
+                  <span>{isKm ? 'រក្សាទុក' : 'Saved'}</span>
+                </Link>
+                <Link
+                  to="/history"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.08] text-white hover:bg-white/15 font-semibold text-xs whitespace-nowrap transition-colors"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>{isKm ? 'ប្រវត្តិ' : 'History'}</span>
+                </Link>
+              </div>
+            </div>
+          )}
 
           {/* Input Card */}
           <div className="bg-white/[0.05] rounded-2xl border border-white/10 p-4 sm:p-6">
@@ -533,7 +579,7 @@ export default function ResourcePage() {
                 >
                   {isSubmitting ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <DotsLoader size="xs" color="dark" />
                       <span>
                         {isKm
                           ? `កំពុងដំណើរការ (${elapsedSeconds}វិ)`
@@ -585,7 +631,7 @@ export default function ResourcePage() {
                   >
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="inline-flex items-center gap-2 font-medium text-white">
-                        <Loader2 className="w-3.5 h-3.5 text-[#38BDF8] animate-spin shrink-0" />
+                        <DotsLoader size="xs" color="accent" />
                         <span>{stageLabel}</span>
                       </span>
                       <span className="text-white/75 tabular-nums shrink-0">

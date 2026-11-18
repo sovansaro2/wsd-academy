@@ -4,6 +4,10 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { createClient } from '@supabase/supabase-js';
 
@@ -12,7 +16,7 @@ export interface LibraryBookRecord {
   r2_key: string;
   title: string;
   grade: number;
-  level: 'primary' | 'lower_secondary' | 'upper_secondary';
+  level: 'primary' | 'lower_secondary' | 'upper_secondary' | 'general_knowledge';
   subject: string;
   subject_label: string;
   pdf_url: string;
@@ -133,7 +137,21 @@ export function buildPublicCoverUrl(cfg: R2Config, pdfKey: string): string {
   return `/api/library/cover?key=${encodeURIComponent(pdfKey)}`;
 }
 
+export function normalizeLibraryGrade(raw: unknown): number {
+  if (raw === 0 || raw === '0' || raw === 'general_knowledge' || raw === 'general-knowledge') {
+    return 0;
+  }
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 12) {
+    return Math.round(parsed);
+  }
+  return 12;
+}
+
 export function detectGradeFromKey(key: string): number {
+  if (/(?:^|\/)general[-_\s]?knowledge(?:\/|$)|ចំណេះដឹងទូទៅ/i.test(key)) {
+    return 0;
+  }
   const normalized = toArabicDigits(key);
   const folderMatch = normalized.match(/(?:^|\/)\s*(?:grade|gr|g)?\s*[-_\s]*(\d{1,2})\s*(?:\/|$)/i);
   if (folderMatch) {
@@ -153,7 +171,10 @@ export function detectGradeFromKey(key: string): number {
   return 12;
 }
 
-export function getLevelForGrade(grade: number): 'primary' | 'lower_secondary' | 'upper_secondary' {
+export function getLevelForGrade(
+  grade: number
+): 'primary' | 'lower_secondary' | 'upper_secondary' | 'general_knowledge' {
+  if (grade === 0) return 'general_knowledge';
   if (grade <= 6) return 'primary';
   if (grade <= 9) return 'lower_secondary';
   return 'upper_secondary';
@@ -183,18 +204,42 @@ export function formatCleanBookTitle(filename: string): string {
   return stripped || base || 'សៀវភៅសិក្សា';
 }
 
+export function buildR2BookKey(params: {
+  originalName: string;
+  grade: number;
+  title?: string;
+}): string {
+  const safeGrade = normalizeLibraryGrade(params.grade);
+  const rawBase = (params.title || '').trim() || params.originalName || `book_${Date.now()}.pdf`;
+  const cleanName =
+    rawBase
+      .replace(/[/\\?#%*:|"<>]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim() || `book_${Date.now()}.pdf`;
+  const finalName = /\.pdf$/i.test(cleanName) ? cleanName : `${cleanName}.pdf`;
+  if (safeGrade === 0) {
+    return `general-knowledge/${finalName}`;
+  }
+  return `grade-${safeGrade}/${finalName}`;
+}
+
 export function parseBookMetadataFromKey(
   key: string,
   fileSize: number,
   lastModified: string,
-  cfg: R2Config
+  cfg: R2Config,
+  customTitle?: string
 ): LibraryBookRecord {
   const segments = key.split('/').filter(Boolean);
   const filename = segments[segments.length - 1] || key;
   const grade = detectGradeFromKey(key);
   const level = getLevelForGrade(grade);
-  const { subject, labelKm } = detectSubjectFromFilename(filename);
-  const title = formatCleanBookTitle(filename);
+  const trimmedTitle = (customTitle || '').trim();
+  const isGeneralKnowledge = level === 'general_knowledge';
+  const detected = isGeneralKnowledge
+    ? { subject: 'general_knowledge', labelKm: 'ចំណេះដឹងទូទៅ' }
+    : detectSubjectFromFilename(`${trimmedTitle} ${filename}`);
+  const title = trimmedTitle || formatCleanBookTitle(filename);
 
   return {
     id: key,
@@ -202,8 +247,8 @@ export function parseBookMetadataFromKey(
     title,
     grade,
     level,
-    subject,
-    subject_label: labelKm,
+    subject: detected.subject,
+    subject_label: detected.labelKm,
     pdf_url: buildPublicPdfUrl(cfg, key),
     file_size: fileSize,
     last_modified: lastModified,
@@ -274,7 +319,9 @@ export async function listR2Books(): Promise<{
   });
 
   books.sort((a, b) => {
-    if (a.grade !== b.grade) return a.grade - b.grade;
+    const ga = a.grade === 0 ? 99 : a.grade;
+    const gb = b.grade === 0 ? 99 : b.grade;
+    if (ga !== gb) return ga - gb;
     return a.title.localeCompare(b.title, 'km');
   });
 
@@ -291,6 +338,7 @@ export async function uploadBookToR2(params: {
   buffer: Buffer;
   originalName: string;
   grade: number;
+  title?: string;
   contentType?: string;
 }): Promise<LibraryBookRecord> {
   const cfg = getR2Config();
@@ -298,10 +346,11 @@ export async function uploadBookToR2(params: {
     throw new Error('Cloudflare R2 credentials are not configured on the server.');
   }
 
-  const safeGrade = Math.min(12, Math.max(1, Number(params.grade) || 12));
-  const cleanName = params.originalName.replace(/[/\\]/g, '_').trim() || `book_${Date.now()}.pdf`;
-  const finalName = /\.pdf$/i.test(cleanName) ? cleanName : `${cleanName}.pdf`;
-  const key = `grade-${safeGrade}/${finalName}`;
+  const key = buildR2BookKey({
+    originalName: params.originalName,
+    grade: params.grade,
+    title: params.title,
+  });
 
   const client = createR2Client(cfg);
   await client.send(
@@ -313,7 +362,145 @@ export async function uploadBookToR2(params: {
     })
   );
 
-  return parseBookMetadataFromKey(key, params.buffer.length, new Date().toISOString(), cfg);
+  return parseBookMetadataFromKey(
+    key,
+    params.buffer.length,
+    new Date().toISOString(),
+    cfg,
+    params.title
+  );
+}
+
+export async function createR2MultipartBookUpload(params: {
+  originalName: string;
+  grade: number;
+  title?: string;
+  contentType?: string;
+}): Promise<{ uploadId: string; key: string; bucketName: string }> {
+  const cfg = getR2Config();
+  if (!cfg.configured) {
+    throw new Error('Cloudflare R2 credentials are not configured on the server.');
+  }
+
+  const key = buildR2BookKey({
+    originalName: params.originalName,
+    grade: params.grade,
+    title: params.title,
+  });
+
+  const client = createR2Client(cfg);
+  const result = await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: cfg.bucketName,
+      Key: key,
+      ContentType: params.contentType || 'application/pdf',
+    })
+  );
+
+  if (!result.UploadId) {
+    throw new Error('Failed to initialize Cloudflare R2 multipart upload.');
+  }
+
+  return {
+    uploadId: result.UploadId,
+    key,
+    bucketName: cfg.bucketName,
+  };
+}
+
+export async function uploadR2BookPart(params: {
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  body: Buffer;
+}): Promise<{ PartNumber: number; ETag: string }> {
+  const cfg = getR2Config();
+  if (!cfg.configured) {
+    throw new Error('Cloudflare R2 credentials are not configured on the server.');
+  }
+
+  const client = createR2Client(cfg);
+  const result = await client.send(
+    new UploadPartCommand({
+      Bucket: cfg.bucketName,
+      Key: params.key,
+      UploadId: params.uploadId,
+      PartNumber: params.partNumber,
+      Body: params.body,
+      ContentLength: params.body.length,
+    })
+  );
+
+  if (!result.ETag) {
+    throw new Error(`Missing ETag for uploaded part ${params.partNumber}.`);
+  }
+
+  return {
+    PartNumber: params.partNumber,
+    ETag: result.ETag,
+  };
+}
+
+export async function completeR2MultipartBookUpload(params: {
+  key: string;
+  uploadId: string;
+  parts: Array<{ PartNumber: number; ETag: string }>;
+  fileSize: number;
+  title?: string;
+}): Promise<LibraryBookRecord> {
+  const cfg = getR2Config();
+  if (!cfg.configured) {
+    throw new Error('Cloudflare R2 credentials are not configured on the server.');
+  }
+
+  const sortedParts = [...params.parts]
+    .filter((p) => Number(p.PartNumber) >= 1 && p.ETag)
+    .sort((a, b) => a.PartNumber - b.PartNumber);
+
+  if (sortedParts.length === 0) {
+    throw new Error('No uploaded parts provided.');
+  }
+
+  const client = createR2Client(cfg);
+  await client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: cfg.bucketName,
+      Key: params.key,
+      UploadId: params.uploadId,
+      MultipartUpload: {
+        Parts: sortedParts,
+      },
+    })
+  );
+
+  return parseBookMetadataFromKey(
+    params.key,
+    Number(params.fileSize) || 0,
+    new Date().toISOString(),
+    cfg,
+    params.title
+  );
+}
+
+export async function abortR2MultipartBookUpload(params: {
+  key: string;
+  uploadId: string;
+}): Promise<void> {
+  const cfg = getR2Config();
+  if (!cfg.configured || !params.key || !params.uploadId) return;
+
+  try {
+    const client = createR2Client(cfg);
+    await client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: cfg.bucketName,
+        Key: params.key,
+        UploadId: params.uploadId,
+      })
+    );
+  } catch {
+    // Best-effort abort cleanup
+  }
 }
 
 export async function deleteBookFromR2(key: string): Promise<void> {
@@ -475,4 +662,66 @@ export async function listSupabaseLibraryBooks(): Promise<LibraryBookRecord[]> {
   } catch {
     return [];
   }
+}
+
+let cachedPublicStats: {
+  studentCount: number;
+  bookCount: number;
+  subjectCount: number;
+  gradeCount: number;
+  updatedAt: number;
+} | null = null;
+
+export async function getPublicPlatformStats() {
+  const now = Date.now();
+  if (cachedPublicStats && now - cachedPublicStats.updatedAt < 60_000) {
+    return cachedPublicStats;
+  }
+
+  const supabase = getServerSupabaseClient();
+  let studentCount = 0;
+  let books: LibraryBookRecord[] = [];
+
+  if (supabase) {
+    try {
+      const { count } = await supabase
+        .from('students')
+        .select('id', { count: 'exact', head: true });
+      if (typeof count === 'number') {
+        studentCount = count;
+      }
+    } catch {
+      // Ignore count error
+    }
+  }
+
+  const cfg = getR2Config();
+  if (cfg.configured) {
+    try {
+      const r2Data = await listR2Books();
+      books = r2Data.books;
+    } catch {
+      books = await listSupabaseLibraryBooks();
+    }
+  } else {
+    books = await listSupabaseLibraryBooks();
+  }
+
+  const subjectSet = new Set<string>();
+  const gradeSet = new Set<number>();
+  for (const b of books) {
+    if (b.subject) subjectSet.add(b.subject);
+    if (typeof b.grade === 'number' && b.grade >= 4 && b.grade <= 12) {
+      gradeSet.add(b.grade);
+    }
+  }
+
+  cachedPublicStats = {
+    studentCount,
+    bookCount: books.length,
+    subjectCount: subjectSet.size,
+    gradeCount: gradeSet.size || 9,
+    updatedAt: now,
+  };
+  return cachedPublicStats;
 }

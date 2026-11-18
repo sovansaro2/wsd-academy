@@ -5,6 +5,9 @@ import { GoogleGenAI, Type, Schema } from '@google/genai';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { Readable } from 'node:stream';
+import fs from 'node:fs';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import {
   ESSAY_RESPONSE_SCHEMA,
   buildKhmerEssayPrompt,
@@ -15,6 +18,11 @@ import {
   getR2Config,
   listR2Books,
   uploadBookToR2,
+  normalizeLibraryGrade,
+  createR2MultipartBookUpload,
+  uploadR2BookPart,
+  completeR2MultipartBookUpload,
+  abortR2MultipartBookUpload,
   deleteBookFromR2,
   getR2PdfStream,
   uploadCoverToR2,
@@ -22,7 +30,23 @@ import {
   syncBooksToSupabase,
   deleteBookFromSupabase,
   listSupabaseLibraryBooks,
+  getPublicPlatformStats,
 } from './server/r2Library';
+
+function decodeMultipartFilename(rawName: string): string {
+  if (!rawName) return 'book.pdf';
+  for (let i = 0; i < rawName.length; i++) {
+    if (rawName.charCodeAt(i) > 255) {
+      return rawName;
+    }
+  }
+  try {
+    const decoded = Buffer.from(rawName, 'latin1').toString('utf8');
+    return decoded.includes('\uFFFD') ? rawName : decoded;
+  } catch {
+    return rawName;
+  }
+}
 
 dotenv.config();
 
@@ -445,6 +469,25 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
     }
   });
 
+  app.get('/api/public/stats', async (_req, res) => {
+    try {
+      const stats = await getPublicPlatformStats();
+      return res.json({
+        ok: true,
+        ...stats,
+      });
+    } catch (error: any) {
+      console.error('Error in GET /api/public/stats:', error);
+      return res.json({
+        ok: false,
+        studentCount: 0,
+        bookCount: 0,
+        subjectCount: 0,
+        gradeCount: 9,
+      });
+    }
+  });
+
   app.post('/api/library/sync', async (_req, res) => {
     try {
       const cfg = getR2Config();
@@ -473,29 +516,43 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
     }
   });
 
-  app.post('/api/library/upload', pdfUpload.single('file'), async (req, res) => {
+  const handleLibraryPdfMiddleware = (req: any, res: any, next: any) => {
+    pdfUpload.single('file')(req, res, (err: any) => {
+      if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            error: 'ទំហំឯកសារ PDF ធំពេកសម្រាប់ការផ្ញើតែមួយដង។ សូមព្យាយាមម្ដងទៀត!',
+          });
+        }
+        return res.status(400).json({
+          error: err?.message || 'មិនអាចអានឯកសារ PDF បានទេ។ សូមព្យាយាមម្ដងទៀត!',
+        });
+      }
+      next();
+    });
+  };
+
+  app.post('/api/library/upload', handleLibraryPdfMiddleware, async (req, res) => {
     try {
       const file = req.file;
-      const grade = Number(req.body.grade || 12);
+      const grade = normalizeLibraryGrade(req.body.grade);
       const customTitle = typeof req.body.title === 'string' ? req.body.title.trim() : '';
 
-      if (!file) {
+      if (!file || !file.buffer?.length) {
         return res.status(400).json({ error: 'សូមជ្រើសរើសឯកសារ PDF។' });
       }
-      if (!/\.pdf$/i.test(file.originalname) && file.mimetype !== 'application/pdf') {
+      const decodedName = decodeMultipartFilename(file.originalname || 'book.pdf');
+      if (!/\.pdf$/i.test(decodedName) && file.mimetype !== 'application/pdf') {
         return res.status(400).json({ error: 'អនុញ្ញាតតែឯកសារ PDF ប៉ុណ្ណោះ។' });
       }
 
       const uploadedBook = await uploadBookToR2({
         buffer: file.buffer,
-        originalName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
+        originalName: decodedName,
         grade,
-        contentType: file.mimetype,
+        title: customTitle || undefined,
+        contentType: file.mimetype || 'application/pdf',
       });
-
-      if (customTitle) {
-        uploadedBook.title = customTitle;
-      }
 
       await syncBooksToSupabase([uploadedBook]);
       res.json({ ok: true, book: uploadedBook });
@@ -504,6 +561,116 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
       res.status(500).json({
         error: error?.message || 'មិនអាចបញ្ជូនសៀវភៅទៅ R2 បានទេ។',
       });
+    }
+  });
+
+  app.post('/api/library/upload/init', async (req, res) => {
+    try {
+      const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName.trim() : '';
+      const grade = normalizeLibraryGrade(req.body?.grade);
+      const customTitle = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+      const rawContentType =
+        typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
+      const fileSize = Number(req.body?.fileSize || 0);
+
+      if (!fileName) {
+        return res.status(400).json({ error: 'សូមជ្រើសរើសឯកសារ PDF។' });
+      }
+      if (!/\.pdf$/i.test(fileName) && rawContentType !== 'application/pdf') {
+        return res.status(400).json({ error: 'អនុញ្ញាតតែឯកសារ PDF ប៉ុណ្ណោះ។' });
+      }
+      if (fileSize <= 0 || fileSize > 500 * 1024 * 1024) {
+        return res.status(400).json({ error: 'ទំហំឯកសារ PDF មិនត្រឹមត្រូវ ឬលើសពី 500MB។' });
+      }
+
+      const initResult = await createR2MultipartBookUpload({
+        originalName: fileName,
+        grade,
+        title: customTitle || undefined,
+        contentType: rawContentType || 'application/pdf',
+      });
+
+      res.json({ ok: true, ...initResult });
+    } catch (error: any) {
+      console.error('Error in POST /api/library/upload/init:', error);
+      res.status(500).json({
+        error: error?.message || 'មិនអាចចាប់ផ្ដើមការ Upload សៀវភៅបានទេ។',
+      });
+    }
+  });
+
+  app.post(
+    '/api/library/upload/part',
+    express.raw({ type: ['application/octet-stream', 'application/pdf'], limit: '20mb' }),
+    async (req, res) => {
+      try {
+        const uploadId = typeof req.query.uploadId === 'string' ? req.query.uploadId : '';
+        const key = typeof req.query.key === 'string' ? req.query.key : '';
+        const partNumber = Number(req.query.partNumber || 0);
+        const body = req.body;
+
+        if (!uploadId || !key || key.includes('..') || !Number.isInteger(partNumber) || partNumber < 1) {
+          return res.status(400).json({ error: 'ទិន្នន័យផ្នែកឯកសារមិនត្រឹមត្រូវ។' });
+        }
+        if (!Buffer.isBuffer(body) || body.length === 0) {
+          return res.status(400).json({ error: 'ផ្នែកឯកសារទទេ មិនអាច Upload បានទេ។' });
+        }
+
+        const uploadedPart = await uploadR2BookPart({
+          key,
+          uploadId,
+          partNumber,
+          body,
+        });
+
+        res.json({ ok: true, partNumber: uploadedPart.PartNumber, ETag: uploadedPart.ETag });
+      } catch (error: any) {
+        console.error('Error in POST /api/library/upload/part:', error);
+        res.status(500).json({
+          error: error?.message || 'ការ Upload ផ្នែកឯកសារមានបញ្ហា។',
+        });
+      }
+    }
+  );
+
+  app.post('/api/library/upload/complete', async (req, res) => {
+    try {
+      const uploadId = typeof req.body?.uploadId === 'string' ? req.body.uploadId : '';
+      const key = typeof req.body?.key === 'string' ? req.body.key : '';
+      const parts = Array.isArray(req.body?.parts) ? req.body.parts : [];
+      const fileSize = Number(req.body?.fileSize || 0);
+      const customTitle = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+
+      if (!uploadId || !key || key.includes('..') || parts.length === 0) {
+        return res.status(400).json({ error: 'ព័ត៌មានបញ្ចប់ Upload មិនគ្រប់គ្រាន់។' });
+      }
+
+      const uploadedBook = await completeR2MultipartBookUpload({
+        key,
+        uploadId,
+        parts,
+        fileSize,
+        title: customTitle || undefined,
+      });
+
+      await syncBooksToSupabase([uploadedBook]);
+      res.json({ ok: true, book: uploadedBook });
+    } catch (error: any) {
+      console.error('Error in POST /api/library/upload/complete:', error);
+      res.status(500).json({
+        error: error?.message || 'មិនអាចបញ្ចប់ការបញ្ជូនសៀវភៅទៅ R2 បានទេ។',
+      });
+    }
+  });
+
+  app.post('/api/library/upload/abort', async (req, res) => {
+    try {
+      const uploadId = typeof req.body?.uploadId === 'string' ? req.body.uploadId : '';
+      const key = typeof req.body?.key === 'string' ? req.body.key : '';
+      await abortR2MultipartBookUpload({ key, uploadId });
+      res.json({ ok: true });
+    } catch {
+      res.json({ ok: false });
     }
   });
 
@@ -657,7 +824,65 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
     });
   };
 
+  const RECOMMEND_TMP_DIR = path.join(os.tmpdir(), 'wsd-recommend-chunks');
+
+  const getSafeChunkFilePath = (uploadId: string): string => {
+    const safeId = uploadId.replace(/[^a-zA-Z0-9_-]/g, '');
+    return path.join(RECOMMEND_TMP_DIR, `${safeId}.pdf`);
+  };
+
+  app.post(
+    '/api/book_recommendation/chunk',
+    express.raw({ type: ['application/octet-stream', 'application/pdf'], limit: '16mb' }),
+    async (req, res) => {
+      try {
+        const uploadId =
+          typeof req.query.uploadId === 'string' && req.query.uploadId.trim()
+            ? req.query.uploadId.trim()
+            : crypto.randomUUID();
+        const chunkIndex = Number(req.query.chunkIndex ?? 0);
+        const body = req.body;
+
+        if (!Buffer.isBuffer(body) || body.length === 0) {
+          return res.status(400).json({ ok: false, error: 'ផ្នែកឯកសារទទេ។' });
+        }
+
+        await fs.promises.mkdir(RECOMMEND_TMP_DIR, { recursive: true });
+        const targetPath = getSafeChunkFilePath(uploadId);
+
+        let currentSize = 0;
+        if (chunkIndex === 0) {
+          await fs.promises.writeFile(targetPath, body);
+          currentSize = body.length;
+        } else {
+          const stat = await fs.promises.stat(targetPath).catch(() => null);
+          if (!stat) {
+            return res.status(400).json({ ok: false, error: 'រកមិនឃើញទីតាំង Upload បណ្ដោះអាសន្នទេ។' });
+          }
+          if (stat.size + body.length > 50 * 1024 * 1024) {
+            await fs.promises.unlink(targetPath).catch(() => {});
+            return res.status(400).json({
+              ok: false,
+              error: 'ទំហំឯកសារ PDF មិនអាចលើសពី 50MB បានទេ (ដែនកំណត់ Telegram)។',
+            });
+          }
+          await fs.promises.appendFile(targetPath, body);
+          currentSize = stat.size + body.length;
+        }
+
+        res.json({ ok: true, uploadId, receivedBytes: currentSize });
+      } catch (error) {
+        console.error('Error in POST /api/book_recommendation/chunk:', error);
+        res.status(500).json({
+          ok: false,
+          error: 'មានបញ្ហាក្នុងការបញ្ជូនផ្នែកឯកសារ PDF។ សូមព្យាយាមម្ដងទៀត!',
+        });
+      }
+    }
+  );
+
   app.post('/api/book_recommendation', handleRecommendPdfMiddleware, async (req, res) => {
+    let chunkedFilePath = '';
     try {
       const recommenderName =
         typeof req.body?.recommenderName === 'string' ? req.body.recommenderName.trim() : '';
@@ -669,19 +894,18 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
         typeof req.body?.originalSource === 'string' ? req.body.originalSource.trim() : '';
       const studentId =
         typeof req.body?.studentId === 'string' ? req.body.studentId.trim() : '';
-      const pdfFile = req.file;
+      const chunkUploadId =
+        typeof req.body?.chunkUploadId === 'string' ? req.body.chunkUploadId.trim() : '';
+      const chunkFileName =
+        typeof req.body?.chunkFileName === 'string' ? req.body.chunkFileName.trim() : 'book.pdf';
 
-      if (!recommenderName || !bookTitle || !bookCategory || (!originalSource && !pdfFile)) {
-        return res.status(400).json({
-          ok: false,
-          error: 'សូមបំពេញព័ត៌មានឲ្យបានគ្រប់គ្រាន់ (ឈ្មោះ, ចំណងជើង, ប្រភេទ និងប្រភព ឬឯកសារ PDF)។',
-        });
-      }
-
+      let pdfBuffer: Buffer | null = req.file?.buffer || null;
+      let pdfSize = req.file?.size || 0;
       let decodedFilename = 'book.pdf';
-      if (pdfFile) {
-        decodedFilename = Buffer.from(pdfFile.originalname || 'book.pdf', 'latin1').toString('utf8');
-        const isPdfMime = pdfFile.mimetype === 'application/pdf';
+
+      if (req.file) {
+        decodedFilename = decodeMultipartFilename(req.file.originalname || 'book.pdf');
+        const isPdfMime = req.file.mimetype === 'application/pdf';
         const isPdfExt = /\.pdf$/i.test(decodedFilename);
         if (!isPdfMime && !isPdfExt) {
           return res.status(400).json({
@@ -689,6 +913,31 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
             error: 'អនុញ្ញាតឲ្យអាប់ឡូតតែឯកសារ PDF ប៉ុណ្ណោះ។',
           });
         }
+      } else if (chunkUploadId) {
+        chunkedFilePath = getSafeChunkFilePath(chunkUploadId);
+        const stat = await fs.promises.stat(chunkedFilePath).catch(() => null);
+        if (!stat || stat.size === 0) {
+          return res.status(400).json({
+            ok: false,
+            error: 'ឯកសារ PDF ដែលបានបញ្ជូនមិនពេញលេញទេ។ សូមព្យាយាមម្ដងទៀត!',
+          });
+        }
+        if (stat.size > 50 * 1024 * 1024) {
+          return res.status(400).json({
+            ok: false,
+            error: 'ទំហំឯកសារ PDF មិនអាចលើសពី 50MB បានទេ (ដែនកំណត់ Telegram)។',
+          });
+        }
+        pdfBuffer = await fs.promises.readFile(chunkedFilePath);
+        pdfSize = stat.size;
+        decodedFilename = chunkFileName || 'book.pdf';
+      }
+
+      if (!recommenderName || !bookTitle || !bookCategory || (!originalSource && !pdfBuffer)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'សូមបំពេញព័ត៌មានឲ្យបានគ្រប់គ្រាន់ (ឈ្មោះ, ចំណងជើង, ប្រភេទ និងប្រភព ឬឯកសារ PDF)។',
+        });
       }
 
       const botToken = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -739,8 +988,8 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
         `📖 <b>ឈ្មោះសៀវភៅ៖</b> ${escapeTelegramHtml(bookTitle)}`,
         `🏷️ <b>ប្រភេទសៀវភៅ៖</b> ${escapeTelegramHtml(bookCategory)}`,
         ...(originalSource ? [`🔗 <b>ប្រភពដើម៖</b> ${escapeTelegramHtml(originalSource)}`] : []),
-        ...(pdfFile
-          ? [`📄 <b>ឯកសារ PDF៖</b> ${escapeTelegramHtml(decodedFilename)} (${(pdfFile.size / (1024 * 1024)).toFixed(2)} MB)`]
+        ...(pdfBuffer
+          ? [`📄 <b>ឯកសារ PDF៖</b> ${escapeTelegramHtml(decodedFilename)} (${(pdfSize / (1024 * 1024)).toFixed(2)} MB)`]
           : []),
       ];
 
@@ -771,7 +1020,7 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
         });
       };
 
-      if (pdfFile) {
+      if (pdfBuffer) {
         const captionFits = fullMessageText.length <= 1024;
 
         if (!captionFits) {
@@ -795,7 +1044,7 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
         form.append('chat_id', String(targetChatId));
         form.append(
           'document',
-          new Blob([new Uint8Array(pdfFile.buffer)], { type: 'application/pdf' }),
+          new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' }),
           decodedFilename.toLowerCase().endsWith('.pdf') ? decodedFilename : `${decodedFilename}.pdf`
         );
         form.append(
@@ -839,6 +1088,10 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
         ok: false,
         error: 'មានបញ្ហាក្នុងការបញ្ជូនការណែនាំសៀវភៅ។ សូមព្យាយាមម្ដងទៀត!',
       });
+    } finally {
+      if (chunkedFilePath) {
+        await fs.promises.unlink(chunkedFilePath).catch(() => {});
+      }
     }
   });
 

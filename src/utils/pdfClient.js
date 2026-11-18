@@ -48,6 +48,10 @@ export async function openPdfDocument(book, { forCoverOnly = false, onProgress }
     return { pdfDoc, loadingTask: task, isLocalCache: true };
   }
 
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('សៀវភៅនេះមិនទាន់បានទាញយកនៅឡើយទេ។ សូមភ្ជាប់អ៊ីនធឺណិតដើម្បីបើកអាន។');
+  }
+
   const proxyUrl = book.r2_key
     ? `/api/library/pdf-proxy?key=${encodeURIComponent(book.r2_key)}`
     : '';
@@ -153,6 +157,12 @@ export async function extractAndStoreBookCover(book, existingPdfDoc = null) {
     if (cachedUrl) {
       return { localUrl: cachedUrl, coverUrl: book.cover_url || null };
     }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const offlinePdf = await getOfflineBookArrayBuffer(book.r2_key);
+      if (!offlinePdf || offlinePdf.byteLength === 0) {
+        return null;
+      }
+    }
   }
 
   let pdfDoc = existingPdfDoc;
@@ -199,24 +209,39 @@ export async function extractAndStoreBookCover(book, existingPdfDoc = null) {
 
 export async function extractCoverBlobFromFile(file, targetWidth = 380) {
   if (!file) return null;
-  const buffer = await file.arrayBuffer();
-  const task = createLoadingTask(buffer, { forCoverOnly: true });
-  let pdfDoc = null;
-  try {
-    pdfDoc = await task.promise;
-    return await renderPdfPage1ToBlob(pdfDoc, targetWidth);
-  } finally {
+
+  const tryOpenAndRender = async (source) => {
+    const task = createLoadingTask(source, { forCoverOnly: true });
+    let pdfDoc = null;
     try {
-      if (typeof pdfDoc?.destroy === 'function') {
-        await pdfDoc.destroy();
-      } else if (typeof pdfDoc?.cleanup === 'function') {
-        await pdfDoc.cleanup();
+      pdfDoc = await task.promise;
+      return await renderPdfPage1ToBlob(pdfDoc, targetWidth);
+    } finally {
+      try {
+        if (typeof pdfDoc?.destroy === 'function') {
+          await pdfDoc.destroy();
+        } else if (typeof pdfDoc?.cleanup === 'function') {
+          await pdfDoc.cleanup();
+        }
+        if (typeof task?.destroy === 'function') {
+          await task.destroy();
+        }
+      } catch {
+        // Ignore cleanup errors
       }
-      if (typeof task?.destroy === 'function') {
-        await task.destroy();
-      }
-    } catch {
-      // Ignore cleanup errors
+    }
+  };
+
+  let objectUrl = '';
+  try {
+    objectUrl = URL.createObjectURL(file);
+    return await tryOpenAndRender(objectUrl);
+  } catch {
+    const buffer = await file.arrayBuffer();
+    return await tryOpenAndRender(buffer);
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
     }
   }
 }
