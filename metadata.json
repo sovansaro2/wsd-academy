@@ -1,0 +1,6 @@
+{
+  "name": "WSD Academy",
+  "description": "Educational platform with math/science solver, BacII exam resources, and student progress tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

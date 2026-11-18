@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-kh-title: 'Rajdhani', 'Koulen', 'Khmer OS Koulen', sans-serif;
+  --font-kh-body: 'Rajdhani', 'Battambang', 'Khmer OS Battambang', sans-serif;
+  --font-kh-content: 'Rajdhani', 'Battambang', 'Khmer OS Battambang', sans-serif;
+  --font-sans: 'Rajdhani', 'Battambang', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-en: 'Rajdhani', system-ui, sans-serif;
+  --font-rajdhani: 'Rajdhani', system-ui, sans-serif;
+
+  --shadow-xs: 0 0 4px 0 rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 0 6px 0 rgba(0, 0, 0, 0.10);
+  --shadow-md: 0 0 10px 0 rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 0 14px 0 rgba(0, 0, 0, 0.14);
+  --shadow-xl: 0 0 18px 0 rgba(0, 0, 0, 0.16);
+  --shadow-2xl: 0 0 24px 0 rgba(0, 0, 0, 0.18);
+  --shadow-tight-sm: 0 0 6px 0 rgba(0, 0, 0, 0.09), 0 0 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-tight-md: 0 0 10px 0 rgba(0, 0, 0, 0.12), 0 0 3px 0 rgba(0, 0, 0, 0.06);
+  --shadow-tight-lg: 0 0 16px 0 rgba(0, 0, 0, 0.15), 0 0 4px 0 rgba(0, 0, 0, 0.08);
+  --shadow-inner-dark: inset 0 0 6px 0 rgba(0, 0, 0, 0.08);
+}
+
+@layer utilities {
+  .font-kh-title {
+    font-family: 'Rajdhani', 'Koulen', 'Khmer OS Koulen', sans-serif;
+    letter-spacing: 0.025em;
+  }
+  .font-kh-body {
+    font-family: 'Rajdhani', 'Battambang', 'Khmer OS Battambang', sans-serif;
+    line-height: 1.625;
+  }
+  .font-kh-content {
+    font-family: 'Rajdhani', 'Battambang', 'Khmer OS Battambang', sans-serif;
+    line-height: 1.625;
+  }
+  .font-en {
+    font-family: 'Rajdhani', system-ui, sans-serif;
+    font-weight: 500;
+  }
+  .font-rajdhani {
+    font-family: 'Rajdhani', system-ui, sans-serif;
+  }
+  
+  .shadow-xs {
+    box-shadow: 0 0 4px 0 rgba(0, 0, 0, 0.08);
+  }
+  .shadow-sm {
+    box-shadow: 0 0 6px 0 rgba(0, 0, 0, 0.10);
+  }
+  .shadow-md {
+    box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.12);
+  }
+  .shadow-lg {
+    box-shadow: 0 0 14px 0 rgba(0, 0, 0, 0.14);
+  }
+  .shadow-xl {
+    box-shadow: 0 0 18px 0 rgba(0, 0, 0, 0.16);
+  }
+  .shadow-2xl {
+    box-shadow: 0 0 24px 0 rgba(0, 0, 0, 0.18);
+  }
+  .shadow-tight-sm {
+    box-shadow: 0 0 6px 0 rgba(0, 0, 0, 0.09), 0 0 2px 0 rgba(0, 0, 0, 0.05);
+  }
+  .shadow-tight-md {
+    box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.12), 0 0 3px 0 rgba(0, 0, 0, 0.06);
+  }
+  .shadow-tight-lg {
+    box-shadow: 0 0 16px 0 rgba(0, 0, 0, 0.15), 0 0 4px 0 rgba(0, 0, 0, 0.08);
+  }
+  .shadow-inner-dark {
+    box-shadow: inset 0 0 6px 0 rgba(0, 0, 0, 0.08);
+  }
+}
+
+:root {
+  --brand-primary: #194350;
+  --brand-primary-hover: #12323d;
+  --brand-border: #38BDF8;
+  font-family: 'Rajdhani', 'Battambang', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color-scheme: dark;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+* {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Terminal syntax highlighting for KaTeX */
+.terminal-content {
+  color: #a6e22e; /* Monokai Green for plain text fallback */
+}
+.terminal-content .katex {
+  color: #a6e22e;
+}
+.terminal-content .katex .mbin, 
+.terminal-content .katex .mrel {
+  color: #f92672; /* Monokai Pink for operators (=, +, -) */
+}
+.terminal-content .katex .mord.mathnormal {
+  color: #66d9ef; /* Monokai Blue for variables (x, y) */
+}
+.terminal-content .katex .mord {
+  color: #e6db74; /* Monokai Yellow for numbers/general ords */
+}
+.terminal-content .katex .mop {
+  color: #66d9ef; /* Monokai Blue for math ops (\lim, \sin) */
+}
+.terminal-content .katex .mord.text {
+  color: #e6db74; 
+}
+.terminal-content .katex .vlist-t,
+.terminal-content .katex .frac-line {
+  border-color: #f92672; /* Pink for fraction lines */
+}
+
+/* Math equations rendering and scroll handling */
+.katex-display {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  max-width: 100% !important;
+  padding: 0.4rem 0 !important;
+  margin: 0.6rem 0 !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.katex-display > .katex {
+  white-space: nowrap;
+}
+
+/* Mobile responsive font sizing for math */
+.terminal-content .katex {
+  font-size: 1.05em;
+}
+
+@media (max-width: 640px) {
+  .terminal-content .katex {
+    font-size: 0.95em;
+  }
+  .prose .katex {
+    font-size: 0.95em;
+  }
+}
+
+/* Inline math safety */
+.prose .katex {
+  max-width: 100%;
+}
+.prose .katex-html {
+  max-width: 100%;
+}
+
+/* Subtle scrollbar for wide equations */
+.terminal-content .katex-display::-webkit-scrollbar,
+.prose .katex-display::-webkit-scrollbar,
+.custom-math-scroll::-webkit-scrollbar {
+  display: block !important;
+  height: 3px !important;
+}
+
+.terminal-content .katex-display::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25) !important;
+  border-radius: 4px;
+}
+
+.prose .katex-display::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5) !important;
+  border-radius: 4px;
+}
