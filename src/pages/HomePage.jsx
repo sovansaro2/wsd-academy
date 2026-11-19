@@ -15,6 +15,9 @@ import {
   X,
   Clock,
   LayoutGrid,
+  Users,
+  Layers,
+  GraduationCap,
 } from 'lucide-react';
 import Button from '../components/common/Button';
 import DotsLoader from '../components/common/DotsLoader';
@@ -41,6 +44,12 @@ import {
   getSavedEssays,
   hydrateSavedEssaysFromOfflineDB,
 } from '../utils/savedEssays';
+import {
+  getStudyHistory,
+  hydrateStudyHistoryFromOfflineDB,
+} from '../utils/studyHistory';
+import { getGradeLabel } from '../data/essayPresets';
+import { latexToPlainText } from '../utils/mathUtils';
 
 const KHMER_DIGITS_MAP = {
   '០': '0',
@@ -60,6 +69,13 @@ function parseStudentGradeNumber(rawGrade) {
   const normalized = String(rawGrade).replace(/[០-៩]/g, (d) => KHMER_DIGITS_MAP[d] ?? d);
   const match = normalized.match(/\b(1[0-2]|[4-9])\b/) || normalized.match(/(1[0-2]|[4-9])/);
   return match ? Number(match[1]) : null;
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[០-៩]/g, (d) => KHMER_DIGITS_MAP[d] ?? d)
+    .trim();
 }
 
 const PUBLIC_STATS_CACHE_KEY = 'wsd_public_stats_cache_v1';
@@ -99,6 +115,8 @@ export default function HomePage() {
 
   const [heroQuery, setHeroQuery] = useState('');
   const [heroScope, setHeroScope] = useState('all');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchBoxRef = useRef(null);
   const [publicStats, setPublicStats] = useState(() => readCachedPublicStats() || {
     studentCount: 0,
     bookCount: 0,
@@ -110,7 +128,9 @@ export default function HomePage() {
   const [isLoadingBooks, setIsLoadingBooks] = useState(true);
   const [offlineMap, setOfflineMap] = useState(() => new Map());
   const [offlineCount, setOfflineCount] = useState(0);
-  const [savedEssayCount, setSavedEssayCount] = useState(() => getSavedEssays(currentUser).length);
+  const [savedEssays, setSavedEssays] = useState(() => getSavedEssays(currentUser));
+  const [historyItems, setHistoryItems] = useState(() => getStudyHistory(currentUser));
+  const savedEssayCount = savedEssays.length;
 
   const [localCovers, setLocalCovers] = useState({});
   const [coverErrors, setCoverErrors] = useState({});
@@ -138,14 +158,34 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const syncEssays = () => setSavedEssayCount(getSavedEssays(currentUser).length);
+    const syncEssays = () => setSavedEssays(getSavedEssays(currentUser));
     syncEssays();
     hydrateSavedEssaysFromOfflineDB(currentUser).then((merged) => {
-      if (Array.isArray(merged)) setSavedEssayCount(merged.length);
+      if (Array.isArray(merged)) setSavedEssays(merged);
     });
     window.addEventListener('wsd:saved-essays-updated', syncEssays);
     return () => window.removeEventListener('wsd:saved-essays-updated', syncEssays);
   }, [currentUser]);
+
+  useEffect(() => {
+    const syncHistory = () => setHistoryItems(getStudyHistory(currentUser));
+    syncHistory();
+    hydrateStudyHistoryFromOfflineDB(currentUser).then((merged) => {
+      if (Array.isArray(merged)) setHistoryItems(merged);
+    });
+    window.addEventListener('wsd:study-history-updated', syncHistory);
+    return () => window.removeEventListener('wsd:study-history-updated', syncHistory);
+  }, [currentUser]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(event.target)) {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     syncOfflineState();
@@ -246,15 +286,78 @@ export default function HomePage() {
     };
   }, [books, publicStats]);
 
+  const buildSearchPath = useCallback(
+    (overrideScope) => {
+      const trimmed = heroQuery.trim();
+      const scopeVal = overrideScope || heroScope;
+      const params = new URLSearchParams();
+      if (trimmed) params.set('q', trimmed);
+      if (scopeVal && scopeVal !== 'all') params.set('scope', scopeVal);
+      const qs = params.toString();
+      return qs ? `/search?${qs}` : '/search';
+    },
+    [heroQuery, heroScope]
+  );
+
   const handleHeroSearchSubmit = (e) => {
     e.preventDefault();
-    const trimmed = heroQuery.trim();
-    const params = new URLSearchParams();
-    if (trimmed) params.set('q', trimmed);
-    if (heroScope && heroScope !== 'all') params.set('scope', heroScope);
-    const qs = params.toString();
-    navigate(qs ? `/search?${qs}` : '/search');
+    if (!heroQuery.trim()) return;
+    setIsSearchOpen(false);
+    navigate(buildSearchPath());
   };
+
+  const autoSearchResults = useMemo(() => {
+    const normQ = normalizeSearchText(heroQuery);
+    if (!normQ) {
+      return { books: [], essays: [], history: [], total: 0 };
+    }
+    const tokens = normQ.split(/\s+/).filter(Boolean);
+    const matchesAll = (haystack) => {
+      const normText = normalizeSearchText(haystack);
+      return tokens.every((tk) => normText.includes(tk));
+    };
+
+    const matchedBooks =
+      heroScope === 'all' || heroScope === 'books'
+        ? books.filter((b) =>
+            matchesAll(
+              `${b.title || ''} ${b.subject_label || ''} ${b.subject || ''} ${formatGradeLabel(
+                b.grade,
+                true
+              )} ${formatGradeLabel(b.grade, false)} ${b.grade ?? ''}`
+            )
+          )
+        : [];
+
+    const matchedEssays =
+      heroScope === 'all' || heroScope === 'essays'
+        ? savedEssays.filter((item) =>
+            matchesAll(
+              `${item.essay?.detected_topic || ''} ${item.essay?.essay_type_label || ''} ${
+                item.note || ''
+              } ${getGradeLabel(item.grade, isKm)}`
+            )
+          )
+        : [];
+
+    const matchedHistory =
+      heroScope === 'all' || heroScope === 'history'
+        ? historyItems.filter((item) =>
+            matchesAll(
+              `${item.title || ''} ${item.topic || ''} ${item.prompt || ''} ${
+                item.subject || ''
+              } ${latexToPlainText(item.problem || '')}`
+            )
+          )
+        : [];
+
+    return {
+      books: matchedBooks,
+      essays: matchedEssays,
+      history: matchedHistory,
+      total: matchedBooks.length + matchedEssays.length + matchedHistory.length,
+    };
+  }, [heroQuery, heroScope, books, savedEssays, historyItems, isKm]);
 
   const handleSubjectChipClick = (sub) => {
     const hasSubjectInLibrary = books.some((b) => b.subject === sub.id);
@@ -470,29 +573,41 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Search Box */}
-        <div className="max-w-2xl mx-auto w-full">
+        {/* Auto-Search Box (Instant Live Results) */}
+        <div ref={searchBoxRef} className="relative max-w-2xl mx-auto w-full">
           <form
             onSubmit={handleHeroSearchSubmit}
-            className="w-full bg-white rounded-full p-1.5 pl-4 sm:pl-5 shadow-lg flex items-center gap-2 focus-within:ring-2 focus-within:ring-[#D4952A]/50 transition-shadow"
+            className="w-full bg-white rounded-full py-2 pl-4 sm:pl-5 pr-3 sm:pr-4 shadow-lg flex items-center gap-2 focus-within:ring-2 focus-within:ring-[#D4952A]/50 transition-shadow"
           >
             <Search className="w-4 h-4 text-slate-400 shrink-0" />
             <input
               type="text"
               value={heroQuery}
-              onChange={(e) => setHeroQuery(e.target.value)}
+              onFocus={() => setIsSearchOpen(true)}
+              onChange={(e) => {
+                setHeroQuery(e.target.value);
+                setIsSearchOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setIsSearchOpen(false);
+                }
+              }}
               placeholder={
                 isKm
                   ? 'ស្វែងរក សៀវភៅ លំហាត់ ឬអត្ថបទ...'
                   : 'Search books, exercises, or essays...'
               }
               aria-label={isKm ? 'ស្វែងរក' : 'Search'}
-              className="flex-1 min-w-0 bg-transparent text-slate-800 placeholder:text-slate-400 text-xs sm:text-sm py-1.5 focus:outline-none"
+              className="flex-1 min-w-0 bg-transparent text-slate-800 placeholder:text-slate-400 text-xs sm:text-sm py-1 focus:outline-none"
             />
             {heroQuery && (
               <button
                 type="button"
-                onClick={() => setHeroQuery('')}
+                onClick={() => {
+                  setHeroQuery('');
+                  setIsSearchOpen(false);
+                }}
                 aria-label={isKm ? 'សម្អាត' : 'Clear'}
                 className="w-7 h-7 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 inline-flex items-center justify-center shrink-0 cursor-pointer"
               >
@@ -500,28 +615,170 @@ export default function HomePage() {
               </button>
             )}
 
-            <div className="hidden sm:flex items-center border-l border-slate-200 pl-3 pr-1 shrink-0">
+            <div className="flex items-center border-l border-slate-200 pl-2.5 sm:pl-3 shrink-0">
               <select
                 value={heroScope}
-                onChange={(e) => setHeroScope(e.target.value)}
+                onChange={(e) => {
+                  setHeroScope(e.target.value);
+                  if (heroQuery.trim()) setIsSearchOpen(true);
+                }}
                 aria-label={isKm ? 'ប្រភេទស្វែងរក' : 'Search scope'}
                 className="text-xs font-medium text-slate-700 bg-transparent focus:outline-none cursor-pointer py-1"
               >
-                <option value="all">{isKm ? 'ពេញនិយម' : 'Popular'}</option>
+                <option value="all">{isKm ? 'ទាំងអស់' : 'All'}</option>
                 <option value="books">{isKm ? 'សៀវភៅ' : 'Books'}</option>
                 <option value="essays">{isKm ? 'តែងសេចក្ដី' : 'Essays'}</option>
                 <option value="history">{isKm ? 'ប្រវត្តិសិក្សា' : 'History'}</option>
               </select>
             </div>
-
-            <button
-              type="submit"
-              className="bg-[#D4952A] hover:bg-[#BE8320] text-white font-semibold text-xs sm:text-sm px-4 sm:px-5 py-2.5 rounded-full inline-flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <Search className="w-3.5 h-3.5 shrink-0" />
-              <span>{isKm ? 'ស្វែងរក' : 'Search'}</span>
-            </button>
           </form>
+
+          {/* Live Auto-Search Results Panel */}
+          {isSearchOpen && heroQuery.trim().length > 0 && (
+            <div className="absolute left-0 right-0 top-full mt-2 z-40 rounded-2xl bg-[#133642] border border-white/15 shadow-2xl overflow-hidden text-left">
+              {autoSearchResults.total === 0 ? (
+                <div className="px-4 py-6 text-center text-xs sm:text-sm text-white/65">
+                  {isKm
+                    ? `រកមិនឃើញលទ្ធផលសម្រាប់ «${heroQuery.trim()}»`
+                    : `No results found for "${heroQuery.trim()}"`}
+                </div>
+              ) : (
+                <div className="max-h-[380px] overflow-y-auto divide-y divide-white/10">
+                  {autoSearchResults.books.length > 0 && (
+                    <div className="p-2">
+                      <div className="px-2.5 py-1 text-[11px] font-semibold text-white/55">
+                        {isKm ? 'សៀវភៅ' : 'Books'} ({autoSearchResults.books.length})
+                      </div>
+                      <div className="space-y-0.5">
+                        {autoSearchResults.books.slice(0, 5).map((book) => {
+                          const coverSrc =
+                            localCovers[book.r2_key] ||
+                            (!coverErrors[book.r2_key] ? book.cover_url : null);
+                          return (
+                            <button
+                              key={book.r2_key}
+                              type="button"
+                              onClick={() => {
+                                setIsSearchOpen(false);
+                                handleOpenBook(book);
+                              }}
+                              className="w-full px-2.5 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-3 text-left transition-colors cursor-pointer"
+                            >
+                              {coverSrc ? (
+                                <img
+                                  src={coverSrc}
+                                  alt={book.title}
+                                  referrerPolicy="no-referrer"
+                                  className="w-7 h-9 rounded object-cover object-top shrink-0 bg-white/10"
+                                />
+                              ) : (
+                                <div className="w-7 h-9 rounded bg-white/[0.08] text-white/60 flex items-center justify-center shrink-0">
+                                  <BookOpen className="w-3.5 h-3.5" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs sm:text-sm font-medium text-white truncate">
+                                  {book.title}
+                                </p>
+                                <p className="text-[11px] text-white/60 truncate tabular-nums">
+                                  {formatGradeLabel(book.grade, isKm)} · {book.subject_label}
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {autoSearchResults.essays.length > 0 && (
+                    <div className="p-2">
+                      <div className="px-2.5 py-1 text-[11px] font-semibold text-white/55">
+                        {isKm ? 'តែងសេចក្ដី' : 'Essays'} ({autoSearchResults.essays.length})
+                      </div>
+                      <div className="space-y-0.5">
+                        {autoSearchResults.essays.slice(0, 3).map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setIsSearchOpen(false);
+                              navigate(buildSearchPath('essays'));
+                            }}
+                            className="w-full px-2.5 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-3 text-left transition-colors cursor-pointer"
+                          >
+                            <div className="w-7 h-7 rounded-lg bg-white/[0.08] text-white/75 flex items-center justify-center shrink-0">
+                              <PenLine className="w-3.5 h-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs sm:text-sm font-medium text-white truncate">
+                                {item.essay?.detected_topic}
+                              </p>
+                              <p className="text-[11px] text-white/60 truncate">
+                                {item.essay?.essay_type_label} · {getGradeLabel(item.grade, isKm)}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {autoSearchResults.history.length > 0 && (
+                    <div className="p-2">
+                      <div className="px-2.5 py-1 text-[11px] font-semibold text-white/55">
+                        {isKm ? 'ប្រវត្តិសិក្សា' : 'History'} ({autoSearchResults.history.length})
+                      </div>
+                      <div className="space-y-0.5">
+                        {autoSearchResults.history.slice(0, 3).map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setIsSearchOpen(false);
+                              navigate(buildSearchPath('history'));
+                            }}
+                            className="w-full px-2.5 py-2 rounded-xl hover:bg-white/[0.08] flex items-center gap-3 text-left transition-colors cursor-pointer"
+                          >
+                            <div className="w-7 h-7 rounded-lg bg-white/[0.08] text-white/75 flex items-center justify-center shrink-0">
+                              <Clock className="w-3.5 h-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs sm:text-sm font-medium text-white truncate">
+                                {item.title ||
+                                  item.topic ||
+                                  latexToPlainText(item.problem || '') ||
+                                  (isKm ? 'លំហាត់' : 'Exercise')}
+                              </p>
+                              {item.subject && (
+                                <p className="text-[11px] text-white/60 truncate">{item.subject}</p>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSearchOpen(false);
+                      navigate(buildSearchPath());
+                    }}
+                    className="w-full px-4 py-2.5 bg-white/[0.04] hover:bg-white/[0.09] text-xs font-semibold text-[#38BDF8] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <span>
+                      {isKm
+                        ? `មើលលទ្ធផលទាំងអស់ (${autoSearchResults.total})`
+                        : `View all results (${autoSearchResults.total})`}
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Subjects Single Horizontal Row */}
@@ -548,40 +805,46 @@ export default function HomePage() {
           {[
             {
               value: displayStats.studentCount,
-              plus: true,
               label: isKm ? 'សិស្សានុសិស្ស' : 'Students',
+              icon: Users,
             },
             {
               value: displayStats.bookCount,
-              plus: true,
               label: isKm ? 'សៀវភៅ' : 'Books',
+              icon: BookOpen,
             },
             {
               value: displayStats.subjectCount,
-              plus: true,
               label: isKm ? 'មុខវិជ្ជា' : 'Subjects',
+              icon: Layers,
             },
             {
               value: displayStats.gradeCount,
-              plus: false,
               label: isKm ? 'ថ្នាក់សិក្សា' : 'Grades 4–12',
+              icon: GraduationCap,
             },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="py-3.5 sm:py-5 px-1.5 sm:px-3 flex flex-col items-center justify-center text-center gap-1 min-w-0"
-            >
-              <div className="font-kh-title text-lg sm:text-3xl text-white tabular-nums tracking-wide leading-none flex items-start">
-                <span>{Number(item.value || 0).toLocaleString()}</span>
-                {item.plus && (
-                  <span className="text-xs sm:text-base font-bold text-[#F59E0B] ml-0.5 -mt-0.5">+</span>
-                )}
+          ].map((item) => {
+            const Icon = item.icon;
+            return (
+              <div
+                key={item.label}
+                className="py-3 sm:py-4 px-1.5 sm:px-3 flex flex-col items-center justify-center text-center gap-1 min-w-0"
+              >
+                <div className="inline-flex items-center justify-center gap-1.5 sm:gap-2">
+                  <Icon
+                    className="w-4 h-4 sm:w-6 sm:h-6 text-white/80 shrink-0"
+                    strokeWidth={1.75}
+                  />
+                  <span className="font-kh-title text-base sm:text-2xl text-white tabular-nums tracking-wide leading-none">
+                    {Number(item.value || 0).toLocaleString()}
+                  </span>
+                </div>
+                <span className="text-[10px] sm:text-xs text-white/75 font-medium whitespace-nowrap truncate max-w-full">
+                  {item.label}
+                </span>
               </div>
-              <span className="text-[10px] sm:text-xs text-white/75 font-medium whitespace-nowrap truncate max-w-full">
-                {item.label}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

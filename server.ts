@@ -31,6 +31,7 @@ import {
   deleteBookFromSupabase,
   listSupabaseLibraryBooks,
   getPublicPlatformStats,
+  updateBookTitle,
 } from './server/r2Library';
 
 function decodeMultipartFilename(rawName: string): string {
@@ -907,8 +908,12 @@ STRICT PARSER SYNTAX RULES FOR "equations[].expr":
         const r2Data = await listR2Books();
         const supaBooks = await listSupabaseLibraryBooks();
         const overrideByKey = new Map(supaBooks.map((b) => [b.r2_key, b]));
+        const r2OverriddenSet = new Set(r2Data.overriddenKeys || []);
 
         const mergedBooks = r2Data.books.map((book) => {
+          if (r2OverriddenSet.has(book.r2_key)) {
+            return book;
+          }
           const override = overrideByKey.get(book.r2_key);
           if (!override) return book;
           const cleanOverrideTitle = (override.title || '').replace(/^[\u17d6:\-–—_\s]+/u, '').trim();
@@ -1154,6 +1159,36 @@ STRICT PARSER SYNTAX RULES FOR "equations[].expr":
       res.json({ ok: true });
     } catch {
       res.json({ ok: false });
+    }
+  });
+
+  app.patch('/api/library/books', async (req, res) => {
+    try {
+      const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+      const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+      if (!key) {
+        return res.status(400).json({ ok: false, error: 'Missing book key.' });
+      }
+      if (!title) {
+        return res.status(400).json({ ok: false, error: 'សូមបញ្ចូលចំណងជើងសៀវភៅ។' });
+      }
+      const result = await updateBookTitle({
+        key,
+        title,
+        fileSize: typeof req.body?.fileSize === 'number' ? req.body.fileSize : undefined,
+        lastModified: typeof req.body?.lastModified === 'string' ? req.body.lastModified : undefined,
+        coverUrl: typeof req.body?.coverUrl === 'string' ? req.body.coverUrl : undefined,
+      });
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (error: any) {
+      console.error('Error in PATCH /api/library/books:', error);
+      res.status(500).json({
+        ok: false,
+        error: error?.message || 'មិនអាចកែចំណងជើងសៀវភៅបានទេ។',
+      });
     }
   });
 

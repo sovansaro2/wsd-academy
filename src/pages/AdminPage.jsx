@@ -4,14 +4,10 @@ import {
   Users,
   BookOpen,
   BarChart3,
-  Settings,
-  Database,
   Lock,
   LogIn,
   RefreshCw,
   Search,
-  Wifi,
-  WifiOff,
   Library,
   Upload,
   Trash2,
@@ -19,8 +15,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Image as ImageIcon,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react';
-import Card from '../components/common/Card';
 import Button from '../components/common/Button';
 import DotsLoader from '../components/common/DotsLoader';
 import { useLanguage } from '../context/LanguageContext';
@@ -30,6 +28,7 @@ import { getSavedEssays, hydrateSavedEssaysFromOfflineDB } from '../utils/savedE
 import { getGradeLabel } from '../data/essayPresets';
 import { LIBRARY_GRADES, formatGradeLabel, formatFileSize } from '../data/librarySubjects';
 import { useOnlineStatus } from '../hooks/usePWA';
+import { saveCachedBookCatalog } from '../utils/offlineLibrary';
 import {
   extractAndStoreBookCover,
   extractCoverBlobFromFile,
@@ -117,7 +116,6 @@ export default function AdminPage() {
   // Library R2 management state
   const [libraryBooks, setLibraryBooks] = useState([]);
   const [libraryConfigured, setLibraryConfigured] = useState(false);
-  const [libraryBucketName, setLibraryBucketName] = useState('wsd-library');
   const [libraryTotalBytes, setLibraryTotalBytes] = useState(0);
   const [isSyncingLibrary, setIsSyncingLibrary] = useState(false);
   const [libraryFeedback, setLibraryFeedback] = useState(null);
@@ -128,6 +126,9 @@ export default function AdminPage() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const uploadFileInputRef = useRef(null);
   const [deletingKey, setDeletingKey] = useState(null);
+  const [editingBookKey, setEditingBookKey] = useState(null);
+  const [editingBookTitle, setEditingBookTitle] = useState('');
+  const [isSavingBookTitle, setIsSavingBookTitle] = useState(false);
   const [isGeneratingCovers, setIsGeneratingCovers] = useState(false);
   const [coverGenProgress, setCoverGenProgress] = useState({ done: 0, total: 0 });
 
@@ -148,12 +149,12 @@ export default function AdminPage() {
             const key = String(row.student_id || row.email || row.id).toLowerCase();
             byId.set(key, row);
           }
-          setDataSourceLabel(isKm ? 'ទិន្នន័យផ្ទាល់ពី Database' : 'Live Database');
+          setDataSourceLabel('Database');
         } else {
-          setDataSourceLabel(isKm ? 'ទិន្នន័យក្នុងម៉ាស៊ីន' : 'Local Records');
+          setDataSourceLabel(isKm ? 'ក្នុងម៉ាស៊ីន' : 'Local');
         }
       } else {
-        setDataSourceLabel(isKm ? 'ទិន្នន័យក្នុងម៉ាស៊ីន' : 'Local Records');
+        setDataSourceLabel(isKm ? 'ក្នុងម៉ាស៊ីន' : 'Local');
       }
 
       // Merge locally registered accounts if not already in Supabase list
@@ -194,7 +195,6 @@ export default function AdminPage() {
           if (libRes.ok) {
             const libData = await libRes.json();
             setLibraryConfigured(Boolean(libData.configured));
-            setLibraryBucketName(libData.bucketName || 'wsd-library');
             setLibraryBooks(Array.isArray(libData.books) ? libData.books : []);
             setLibraryTotalBytes(Number(libData.totalSizeBytes || 0));
           }
@@ -540,6 +540,82 @@ export default function AdminPage() {
     });
   };
 
+  const handleStartEditBook = (book) => {
+    setEditingBookKey(book.r2_key);
+    setEditingBookTitle(book.title || '');
+    setLibraryFeedback(null);
+  };
+
+  const handleCancelEditBook = () => {
+    setEditingBookKey(null);
+    setEditingBookTitle('');
+  };
+
+  const handleSaveBookTitle = async (book) => {
+    const trimmed = editingBookTitle.trim();
+    if (!trimmed) {
+      setLibraryFeedback({
+        type: 'error',
+        message: isKm ? 'សូមបញ្ចូលចំណងជើងសៀវភៅ។' : 'Please enter a book title.',
+      });
+      return;
+    }
+
+    if (trimmed === (book.title || '').trim()) {
+      handleCancelEditBook();
+      return;
+    }
+
+    setIsSavingBookTitle(true);
+    setLibraryFeedback(null);
+    try {
+      const res = await fetch('/api/library/books', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: book.r2_key,
+          title: trimmed,
+          fileSize: book.file_size,
+          lastModified: book.last_modified,
+          coverUrl: book.cover_url,
+        }),
+      });
+      const data = await parseResponseJsonSafely(res);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || 'Update failed');
+      }
+
+      setLibraryBooks((prev) => {
+        const next = prev.map((item) =>
+          item.r2_key === book.r2_key
+            ? {
+                ...item,
+                title: data.book?.title || trimmed,
+                subject: data.book?.subject || item.subject,
+                subject_label: data.book?.subject_label || item.subject_label,
+              }
+            : item
+        );
+        saveCachedBookCatalog(next);
+        return next;
+      });
+
+      setEditingBookKey(null);
+      setEditingBookTitle('');
+      setLibraryFeedback({
+        type: 'success',
+        message: isKm ? 'បានកែចំណងជើងសៀវភៅរួចរាល់។' : 'Book title updated.',
+      });
+    } catch (err) {
+      setLibraryFeedback({
+        type: 'error',
+        message: err?.message || (isKm ? 'មិនអាចកែចំណងជើងសៀវភៅបានទេ។' : 'Failed to update title.'),
+      });
+    } finally {
+      setIsSavingBookTitle(false);
+    }
+  };
+
   const handleDeleteLibraryBook = async (book) => {
     setDeletingKey(book.r2_key);
     setLibraryFeedback(null);
@@ -551,7 +627,11 @@ export default function AdminPage() {
       if (!res.ok) {
         throw new Error(data.error || 'Delete failed');
       }
-      setLibraryBooks((prev) => prev.filter((item) => item.r2_key !== book.r2_key));
+      setLibraryBooks((prev) => {
+        const next = prev.filter((item) => item.r2_key !== book.r2_key);
+        saveCachedBookCatalog(next);
+        return next;
+      });
       setLibraryTotalBytes((prev) => Math.max(0, prev - Number(book.file_size || 0)));
       setLibraryFeedback({
         type: 'success',
@@ -570,7 +650,7 @@ export default function AdminPage() {
   const adminTabs = [
     {
       id: 'overview',
-      labelKm: 'ទិដ្ឋភាពទូទៅ',
+      labelKm: 'ទូទៅ',
       labelEn: 'Overview',
       icon: BarChart3,
     },
@@ -582,23 +662,22 @@ export default function AdminPage() {
     },
     {
       id: 'users',
-      labelKm: 'អ្នកប្រើប្រាស់',
-      labelEn: 'Users',
+      labelKm: 'សិស្ស',
+      labelEn: 'Students',
       icon: Users,
     },
     {
       id: 'content',
-      labelKm: 'តែងសេចក្ដីរក្សាទុក',
-      labelEn: 'Saved Essays',
+      labelKm: 'តែងសេចក្ដី',
+      labelEn: 'Essays',
       icon: BookOpen,
     },
-    {
-      id: 'settings',
-      labelKm: 'ប្រព័ន្ធ',
-      labelEn: 'System',
-      icon: Settings,
-    },
   ];
+
+  const missingCoversCount = useMemo(
+    () => libraryBooks.filter((b) => !b.cover_url).length,
+    [libraryBooks]
+  );
 
   // If not admin, show clean admin access gate
   if (!isAuthenticated || !isAdmin) {
@@ -610,30 +689,28 @@ export default function AdminPage() {
           </h1>
         </div>
 
-        <div className="bg-white/[0.05] border border-white/10 rounded-2xl p-10 sm:p-16 text-center space-y-5 max-w-lg mx-auto my-8">
-          <div className="h-14 w-14 bg-white/[0.08] rounded-2xl flex items-center justify-center text-[#38BDF8] mx-auto">
-            <Lock className="h-7 w-7" />
+        <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-10 sm:p-14 text-center space-y-5 max-w-md mx-auto my-8">
+          <div className="h-12 w-12 bg-white/[0.08] rounded-xl flex items-center justify-center text-[#38BDF8] mx-auto">
+            <Lock className="h-6 w-6" />
           </div>
 
-          <div className="space-y-2">
-            <h3 className="font-kh-title text-xl text-white">
-              {isKm ? 'ទាមទារសិទ្ធិជា Admin' : 'Admin Privileges Required'}
+          <div className="space-y-1.5">
+            <h3 className="font-kh-title text-lg text-white">
+              {isKm ? 'សម្រាប់តែអ្នកគ្រប់គ្រង' : 'Admin Access Only'}
             </h3>
-            <p className="text-xs sm:text-sm text-white/75 leading-relaxed">
-              {isKm
-                ? 'ទំព័រនេះសម្រាប់តែគណនី Admin ប៉ុណ្ណោះ។'
-                : 'This panel is restricted to administrator accounts.'}
+            <p className="text-xs sm:text-sm text-white/70">
+              {isKm ? 'សូមចូលគណនីអ្នកគ្រប់គ្រងដើម្បីបន្ត។' : 'Sign in with an administrator account.'}
             </p>
           </div>
 
-          <div className="pt-2 flex justify-center">
+          <div className="pt-1 flex justify-center">
             <Button
               variant="primary"
               size="md"
               leftIcon={LogIn}
               onClick={() => setIsLoginOpen(true)}
             >
-              {isKm ? 'ចូលគណនី Admin' : 'Sign In as Admin'}
+              {isKm ? 'ចូលគណនី' : 'Sign In'}
             </Button>
           </div>
         </div>
@@ -642,18 +719,20 @@ export default function AdminPage() {
   }
 
   return (
-    <div id="admin-page-container" className="space-y-6 font-kh-body pb-10">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
-        <div className="space-y-1">
-          <h1 className="font-kh-title text-2xl text-white tracking-wide">
+    <div id="admin-page-container" className="space-y-5 font-kh-body pb-10">
+      {/* Compact Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
+        <div className="space-y-1 min-w-0">
+          <h1 className="font-kh-title text-xl sm:text-2xl text-white tracking-wide">
             {t('pages.admin.title')}
           </h1>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-white/75">
-            <span className="inline-flex items-center gap-1 font-semibold text-white">
-              <ShieldCheck className="h-3.5 w-3.5 text-[#38BDF8]" />
-              <span>Admin · {currentUser?.first_name || 'Admin'}</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
+            <span className="inline-flex items-center gap-1.5 font-medium text-white/90">
+              <ShieldCheck className="h-3.5 w-3.5 text-[#38BDF8] shrink-0" />
+              <span>{currentUser?.first_name || 'Admin'}</span>
             </span>
+            <span aria-hidden="true">·</span>
+            <span>{isOnline ? (isKm ? 'អនឡាញ' : 'Online') : 'Offline'}</span>
             {dataSourceLabel && (
               <>
                 <span aria-hidden="true">·</span>
@@ -667,19 +746,87 @@ export default function AdminPage() {
           type="button"
           onClick={loadRealData}
           disabled={isLoadingData}
-          className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-white/[0.08] hover:bg-white/15 rounded-xl transition-colors self-start sm:self-center cursor-pointer disabled:opacity-60"
+          className="h-9 inline-flex items-center gap-2 px-3.5 text-xs font-semibold text-white bg-white/[0.06] hover:bg-white/[0.12] border border-white/12 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
         >
           {isLoadingData ? (
             <DotsLoader size="xs" color="white" />
           ) : (
-            <RefreshCw className="w-3.5 h-3.5 text-white" />
+            <RefreshCw className="w-3.5 h-3.5 text-white/85" />
           )}
-          <span>{isKm ? 'ធ្វើបច្ចុប្បន្នភាព' : 'Refresh'}</span>
+          <span>{isKm ? 'ផ្ទុកឡើងវិញ' : 'Refresh'}</span>
         </button>
       </div>
 
-      {/* Admin Navigation Sub-Tabs */}
-      <div className="flex items-center gap-1 p-1 bg-white/[0.06] rounded-xl overflow-x-auto select-none">
+      {/* Unified Essential Metrics Strip */}
+      <div className="rounded-2xl bg-white/[0.04] border border-white/10 grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-white/10 overflow-hidden">
+        {[
+          {
+            id: 'library',
+            label: isKm ? 'សៀវភៅ' : 'Books',
+            value: libraryBooks.length.toLocaleString(),
+            clickable: true,
+          },
+          {
+            id: 'users',
+            label: isKm ? 'សិស្ស' : 'Students',
+            value: students.length.toLocaleString(),
+            clickable: true,
+          },
+          {
+            id: 'content',
+            label: isKm ? 'តែងសេចក្ដី' : 'Essays',
+            value: savedEssays.length.toLocaleString(),
+            clickable: true,
+          },
+          {
+            id: 'storage',
+            label: isKm ? 'ទំហំឯកសារ' : 'Storage',
+            value: libraryTotalBytes > 0 ? formatFileSize(libraryTotalBytes) : storageSizeLabel,
+            clickable: false,
+          },
+        ].map((stat) => {
+          const inner = (
+            <>
+              <div className="font-kh-title text-xl sm:text-2xl text-white tabular-nums leading-none">
+                {stat.value}
+              </div>
+              <div className="text-xs text-white/65 font-medium whitespace-nowrap">
+                {stat.label}
+              </div>
+            </>
+          );
+
+          if (stat.clickable) {
+            return (
+              <button
+                key={stat.id}
+                type="button"
+                onClick={() => {
+                  setActiveAdminTab(stat.id);
+                  setSearchQuery('');
+                }}
+                className={`py-4 px-4 flex flex-col items-center justify-center text-center gap-1.5 transition-colors cursor-pointer ${
+                  activeAdminTab === stat.id ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
+                }`}
+              >
+                {inner}
+              </button>
+            );
+          }
+
+          return (
+            <div
+              key={stat.id}
+              className="py-4 px-4 flex flex-col items-center justify-center text-center gap-1.5"
+            >
+              {inner}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Concise Navigation Tabs */}
+      <div className="inline-flex w-full sm:w-auto items-center gap-1 p-1 bg-white/[0.04] border border-white/10 rounded-xl overflow-x-auto select-none">
         {adminTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeAdminTab === tab.id;
@@ -694,151 +841,147 @@ export default function AdminPage() {
                 setActiveAdminTab(tab.id);
                 setSearchQuery('');
               }}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 isActive
-                  ? 'bg-white/18 text-white font-semibold'
-                  : 'text-white/75 hover:text-white hover:bg-white/[0.06]'
+                  ? 'bg-white/[0.14] text-white font-semibold'
+                  : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
               }`}
             >
-              <Icon className="h-4 w-4 shrink-0" />
+              <Icon className="h-3.5 w-3.5 shrink-0" />
               <span>{label}</span>
             </button>
           );
         })}
       </div>
 
-      {/* Real Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          {
-            titleKm: 'អ្នកប្រើប្រាស់សរុប',
-            titleEn: 'Registered Users',
-            value: students.length.toLocaleString(),
-            subKm: 'គណនីចុះឈ្មោះក្នុងប្រព័ន្ធ',
-            subEn: 'Registered accounts',
-            icon: Users,
-          },
-          {
-            titleKm: 'តែងសេចក្ដីរក្សាទុក',
-            titleEn: 'Saved Essays',
-            value: savedEssays.length.toLocaleString(),
-            subKm: 'ទិន្នន័យលើឧបករណ៍នេះ',
-            subEn: 'Stored on this device',
-            icon: BookOpen,
-          },
-          {
-            titleKm: 'ទំហំផ្ទុកក្នុងម៉ាស៊ីន',
-            titleEn: 'Local Storage Used',
-            value: storageSizeLabel,
-            subKm: 'ទំហំប្រើប្រាស់ជាក់ស្ដែង',
-            subEn: 'Actual browser storage',
-            icon: Database,
-          },
-          {
-            titleKm: 'ការតភ្ជាប់ប្រព័ន្ធ',
-            titleEn: 'Connection Status',
-            value: isOnline ? (isKm ? 'អនឡាញ' : 'Online') : 'Offline',
-            subKm: isSupabaseConfigured
-              ? isKm
-                ? 'Database បានភ្ជាប់'
-                : 'Database connected'
-              : isKm
-              ? 'ប្រើប្រាស់ក្នុងម៉ាស៊ីន'
-              : 'Local mode',
-            icon: isOnline ? Wifi : WifiOff,
-          },
-        ].map((stat, idx) => {
-          const Icon = stat.icon;
-          return (
-            <div
-              key={idx}
-              className="bg-white/[0.05] border border-white/10 rounded-2xl p-4 sm:p-5 space-y-2"
-            >
-              <div className="flex items-center justify-between text-white/75">
-                <span className="text-xs font-medium">
-                  {isKm ? stat.titleKm : stat.titleEn}
-                </span>
-                <Icon className="h-4 w-4 text-white/75" />
-              </div>
-              <div className="text-2xl font-bold text-white font-kh-title tabular-nums">
-                {stat.value}
-              </div>
-              <div className="text-xs text-white/75">
-                {isKm ? stat.subKm : stat.subEn}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Tab Content */}
+      {/* Overview Tab */}
       {activeAdminTab === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card
-            title={isKm ? 'គណនីសិស្សចុងក្រោយ' : 'Recent Student Accounts'}
-          >
-            {students.length === 0 ? (
-              <div className="py-8 text-center text-xs sm:text-sm text-white/70">
-                {isKm ? 'មិនទាន់មានគណនីចុះឈ្មោះនៅឡើយទេ' : 'No registered accounts yet'}
-              </div>
-            ) : (
-              <div className="divide-y divide-white/10">
-                {students.slice(0, 5).map((s, idx) => (
-                  <div key={s.id || s.student_id || idx} className="py-2.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-white truncate">
-                        {`${s.last_name || ''} ${s.first_name || ''}`.trim() || s.email || s.student_id}
-                      </p>
-                      <p className="text-xs text-white/75 tabular-nums truncate">
-                        {s.student_id} · {s.grade || '-'}
-                      </p>
+          {/* Recent Students */}
+          <section className="rounded-2xl bg-white/[0.04] border border-white/10 overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/10 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-white">
+                {isKm ? 'សិស្សចុងក្រោយ' : 'Recent Students'}
+              </h2>
+              {students.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveAdminTab('users');
+                    setSearchQuery('');
+                  }}
+                  className="text-xs font-medium text-white/70 hover:text-white transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  {isKm ? 'មើលទាំងអស់' : 'View all'}
+                </button>
+              )}
+            </div>
+            <div className="px-4 sm:px-5">
+              {students.length === 0 ? (
+                <div className="py-10 text-center text-xs text-white/60">
+                  {isKm ? 'មិនទាន់មានទិន្នន័យសិស្ស' : 'No student records yet'}
+                </div>
+              ) : (
+                <div className="divide-y divide-white/10">
+                  {students.slice(0, 5).map((s, idx) => (
+                    <div
+                      key={s.id || s.student_id || idx}
+                      className="py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-white truncate">
+                          {`${s.last_name || ''} ${s.first_name || ''}`.trim() || s.email || s.student_id}
+                        </p>
+                        <p className="text-xs text-white/65 tabular-nums truncate">
+                          {s.student_id || '-'}
+                          {s.grade ? ` · ${s.grade}` : ''}
+                        </p>
+                      </div>
+                      <span className="text-xs text-white/65 shrink-0">
+                        {s.role === 'admin' ? (isKm ? 'អ្នកគ្រប់គ្រង' : 'Admin') : isKm ? 'សិស្ស' : 'Student'}
+                      </span>
                     </div>
-                    <span className="text-xs text-white/75 shrink-0">
-                      {s.role || 'student'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
 
-          <Card
-            title={isKm ? 'តែងសេចក្ដីរក្សាទុកចុងក្រោយ' : 'Recent Saved Essays'}
-          >
-            {savedEssays.length === 0 ? (
-              <div className="py-8 text-center text-xs sm:text-sm text-white/70">
-                {isKm ? 'មិនទាន់មានតែងសេចក្ដីរក្សាទុកទេ' : 'No saved essays yet'}
-              </div>
-            ) : (
-              <div className="divide-y divide-white/10">
-                {savedEssays.slice(0, 5).map((item) => (
-                  <div key={item.id} className="py-2.5 space-y-1">
-                    <p className="text-sm font-medium text-white line-clamp-1">
-                      {item.essay?.detected_topic}
-                    </p>
-                    <p className="text-xs text-white/75 tabular-nums">
-                      {item.essay?.essay_type_label} · {getGradeLabel(item.grade, isKm)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+          {/* Recent Library Books */}
+          <section className="rounded-2xl bg-white/[0.04] border border-white/10 overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/10 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-white">
+                {isKm ? 'សៀវភៅក្នុងបណ្ណាល័យ' : 'Library Books'}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveAdminTab('library');
+                  setSearchQuery('');
+                }}
+                className="text-xs font-medium text-white/70 hover:text-white transition-colors whitespace-nowrap cursor-pointer"
+              >
+                {isKm ? 'គ្រប់គ្រង' : 'Manage'}
+              </button>
+            </div>
+            <div className="px-4 sm:px-5">
+              {libraryBooks.length === 0 ? (
+                <div className="py-10 text-center text-xs text-white/60">
+                  {isKm ? 'មិនទាន់មានសៀវភៅទេ' : 'No library books yet'}
+                </div>
+              ) : (
+                <div className="divide-y divide-white/10">
+                  {libraryBooks.slice(0, 5).map((book) => (
+                    <div
+                      key={book.r2_key}
+                      className="py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {book.cover_url ? (
+                          <img
+                            src={book.cover_url}
+                            alt={book.title}
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            className="w-7 h-9 rounded object-cover object-top shrink-0 bg-white/10"
+                          />
+                        ) : (
+                          <div className="w-7 h-9 rounded bg-white/[0.06] text-white/55 flex items-center justify-center shrink-0">
+                            <BookOpen className="w-3.5 h-3.5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{book.title}</p>
+                          <p className="text-xs text-white/65 truncate tabular-nums">
+                            {formatGradeLabel(book.grade, isKm)} · {book.subject_label}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/65 tabular-nums whitespace-nowrap shrink-0">
+                        {formatFileSize(book.file_size)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       )}
 
+      {/* Library Tab */}
       {activeAdminTab === 'library' && (
         <div className="space-y-4">
           {libraryFeedback && (
             <div
-              className={`rounded-xl px-4 py-3 border text-xs sm:text-sm flex items-center gap-2 bg-transparent ${
+              className={`rounded-xl px-4 py-2.5 border text-xs sm:text-sm flex items-center gap-2 ${
                 libraryFeedback.type === 'success'
-                  ? 'border-emerald-400/55 text-emerald-300'
-                  : 'border-rose-400/55 text-rose-300'
+                  ? 'border-emerald-400/45 text-emerald-300 bg-emerald-500/[0.06]'
+                  : 'border-rose-400/45 text-rose-300 bg-rose-500/[0.06]'
               }`}
             >
               {libraryFeedback.type === 'success' ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-300" />
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
               ) : (
                 <AlertCircle className="w-4 h-4 shrink-0" />
               )}
@@ -846,43 +989,42 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* R2 Connection & Sync Card */}
-          <Card
-            title={isKm ? 'ការគ្រប់គ្រងបណ្ណាល័យ Cloudflare R2' : 'Cloudflare R2 Library'}
-            subtitle={
-              libraryConfigured
-                ? isKm
-                  ? `Bucket: ${libraryBucketName} · សរុប ${libraryBooks.length} ក្បាល (${formatFileSize(libraryTotalBytes)}) · មានរូបក្រប ${libraryBooks.filter((b) => Boolean(b.cover_url)).length}/${libraryBooks.length}`
-                  : `Bucket: ${libraryBucketName} · ${libraryBooks.length} books (${formatFileSize(libraryTotalBytes)}) · ${libraryBooks.filter((b) => Boolean(b.cover_url)).length}/${libraryBooks.length} covers`
-                : isKm
-                ? 'សូមកំណត់អថេរ R2 (R2_ENDPOINT, R2_BUCKET_NAME, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_PUBLIC_URL) នៅក្នុង Server Secrets / .env'
-                : 'Configure R2 server environment variables (R2_ENDPOINT, R2_BUCKET_NAME, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_PUBLIC_URL).'
-            }
-            headerAction={
-              <div className="flex flex-wrap items-center gap-2">
+          {/* Upload & Sync Section */}
+          <section className="rounded-2xl bg-white/[0.04] border border-white/10 overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5 min-w-0">
+                <h2 className="text-sm font-semibold text-white">
+                  {isKm ? 'បន្ថែមសៀវភៅ' : 'Upload Book'}
+                </h2>
+                <p className="text-xs text-white/65 tabular-nums">
+                  {libraryConfigured
+                    ? isKm
+                      ? `${libraryBooks.length} ក្បាល · ${formatFileSize(libraryTotalBytes)}${missingCoversCount > 0 ? ` · ខ្វះក្រប ${missingCoversCount}` : ''}`
+                      : `${libraryBooks.length} books · ${formatFileSize(libraryTotalBytes)}${missingCoversCount > 0 ? ` · ${missingCoversCount} missing covers` : ''}`
+                    : isKm
+                    ? 'មិនទាន់ភ្ជាប់ R2'
+                    : 'R2 not configured'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={handleGenerateMissingCovers}
-                  disabled={
-                    isGeneratingCovers ||
-                    !libraryConfigured ||
-                    libraryBooks.every((b) => Boolean(b.cover_url))
-                  }
-                  className="min-h-[38px] inline-flex items-center gap-2 px-3.5 py-2 bg-white/[0.08] hover:bg-white/15 text-white text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                  disabled={isGeneratingCovers || !libraryConfigured || missingCoversCount === 0}
+                  className="h-9 inline-flex items-center gap-1.5 px-3 bg-white/[0.06] hover:bg-white/[0.12] border border-white/12 text-white text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-45"
                 >
                   {isGeneratingCovers ? (
                     <>
                       <DotsLoader size="xs" color="white" />
                       <span className="tabular-nums">
-                        {isKm
-                          ? `កំពុងបង្កើតក្រប (${coverGenProgress.done}/${coverGenProgress.total})`
-                          : `Covers (${coverGenProgress.done}/${coverGenProgress.total})`}
+                        {coverGenProgress.done}/{coverGenProgress.total}
                       </span>
                     </>
                   ) : (
                     <>
-                      <ImageIcon className="w-3.5 h-3.5 text-white" />
-                      <span>{isKm ? 'បង្កើតរូបក្របសៀវភៅ' : 'Generate Covers'}</span>
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>{isKm ? 'បង្កើតក្រប' : 'Covers'}</span>
                     </>
                   )}
                 </button>
@@ -891,157 +1033,166 @@ export default function AdminPage() {
                   type="button"
                   onClick={handleSyncLibraryFromR2}
                   disabled={isSyncingLibrary || !libraryConfigured}
-                  className="min-h-[38px] inline-flex items-center gap-2 px-4 py-2 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] text-xs font-bold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                  className="h-9 inline-flex items-center gap-1.5 px-3.5 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] text-xs font-bold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-45"
                 >
                   {isSyncingLibrary ? (
                     <DotsLoader size="xs" color="dark" />
                   ) : (
                     <RefreshCw className="w-3.5 h-3.5" />
                   )}
-                  <span>{isKm ? 'Sync ពី R2 Bucket' : 'Sync from R2'}</span>
+                  <span>{isKm ? 'ធ្វើសមកាលកម្ម' : 'Sync'}</span>
                 </button>
               </div>
-            }
-          >
-            <form onSubmit={handleUploadLibraryBook} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <div className="sm:col-span-3 space-y-1">
-                <label className="block text-xs font-medium text-white/80">
-                  {isKm ? 'ថ្នាក់ / អាល់ប៊ុម' : 'Grade / Album'}
-                </label>
-                <select
-                  value={uploadGrade}
-                  onChange={(e) => setUploadGrade(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white [&_option]:bg-[#194350] [&_option]:text-white focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/20 focus:border-[#38BDF8]"
-                >
-                  {LIBRARY_GRADES.map((g) => (
-                    <option key={g} value={String(g)}>
-                      {formatGradeLabel(g, isKm)}
-                    </option>
-                  ))}
-                  <option value="0">
-                    {isKm ? 'ចំណេះដឹងទូទៅ (សៀវភៅផ្សេងៗ)' : 'General Knowledge (Other Books)'}
-                  </option>
-                </select>
-              </div>
+            </div>
 
-              <div className="sm:col-span-4 space-y-1">
-                <label className="block text-xs font-medium text-white/80">
-                  {isKm ? 'ចំណងជើង (ជម្រើស — ទុកទំនេរយកតាមឈ្មោះ File)' : 'Title (optional)'}
-                </label>
-                <input
-                  type="text"
-                  value={uploadTitle}
-                  onChange={(e) => setUploadTitle(e.target.value)}
-                  placeholder={isKm ? 'បញ្ចូលចំណងជើងសៀវភៅ' : 'Enter book title'}
-                  className="w-full min-h-[40px] px-3 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/20 focus:border-[#38BDF8]"
-                />
-              </div>
-
-              <div className="sm:col-span-3 space-y-1">
-                <label className="block text-xs font-medium text-white/80">
-                  {isKm ? 'ឯកសារ PDF' : 'PDF File'}
-                </label>
-                <input
-                  ref={uploadFileInputRef}
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                  className="w-full min-h-[40px] px-2.5 py-1.5 bg-white/[0.04] border border-white/15 rounded-xl text-xs text-white file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-white/12 file:text-white"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <button
-                  type="submit"
-                  disabled={isUploadingBook || !libraryConfigured || !uploadFile || !isOnline}
-                  className="w-full min-h-[40px] inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] text-xs font-bold rounded-xl transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
-                >
-                  {isUploadingBook ? (
-                    <DotsLoader size="xs" color="dark" />
-                  ) : (
-                    <Upload className="w-3.5 h-3.5" />
-                  )}
-                  <span>
-                    {isUploadingBook && uploadProgress
-                      ? `${uploadProgress.percent}%`
-                      : 'Upload'}
-                  </span>
-                </button>
-              </div>
-            </form>
-
-            {isUploadingBook && uploadProgress && (
-              <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
-                <div className="flex items-center justify-between text-xs text-white/80 tabular-nums">
-                  <span>
-                    {uploadProgress.stage === 'cover'
-                      ? isKm
-                        ? 'កំពុងបង្កើតរូបក្របសៀវភៅ...'
-                        : 'Generating book cover...'
-                      : uploadProgress.stage === 'refreshing'
-                      ? isKm
-                        ? 'កំពុងធ្វើបច្ចុប្បន្នភាពបញ្ជី...'
-                        : 'Refreshing library...'
-                      : isKm
-                      ? 'កំពុង Upload ឯកសារ PDF...'
-                      : 'Uploading PDF...'}
-                  </span>
-                  <span>
-                    {formatFileSize(uploadProgress.loadedBytes)} / {formatFileSize(uploadProgress.totalBytes)} ({uploadProgress.percent}%)
-                  </span>
+            <div className="p-4 sm:p-5">
+              <form
+                onSubmit={handleUploadLibraryBook}
+                className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
+              >
+                <div className="sm:col-span-3 space-y-1.5">
+                  <label className="block text-xs font-medium text-white/75">
+                    {isKm ? 'ថ្នាក់' : 'Grade'}
+                  </label>
+                  <select
+                    value={uploadGrade}
+                    onChange={(e) => setUploadGrade(e.target.value)}
+                    className="w-full h-10 px-3 bg-white/[0.05] border border-white/15 rounded-xl text-sm text-white [&_option]:bg-[#194350] [&_option]:text-white focus:outline-none focus:border-[#38BDF8]"
+                  >
+                    {LIBRARY_GRADES.map((g) => (
+                      <option key={g} value={String(g)}>
+                        {formatGradeLabel(g, isKm)}
+                      </option>
+                    ))}
+                    <option value="0">{isKm ? 'ចំណេះដឹងទូទៅ' : 'General'}</option>
+                  </select>
                 </div>
-                <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
-                  <div
-                    className="h-full bg-[#38BDF8] transition-all duration-200"
-                    style={{ width: `${uploadProgress.percent}%` }}
+
+                <div className="sm:col-span-4 space-y-1.5">
+                  <label className="block text-xs font-medium text-white/75">
+                    {isKm ? 'ចំណងជើង' : 'Title'}
+                  </label>
+                  <input
+                    type="text"
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder={isKm ? 'បញ្ចូលចំណងជើងសៀវភៅ' : 'Enter book title'}
+                    className="w-full h-10 px-3 bg-white/[0.05] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-[#38BDF8]"
                   />
                 </div>
-              </div>
-            )}
-          </Card>
+
+                <div className="sm:col-span-3 space-y-1.5">
+                  <label className="block text-xs font-medium text-white/75">
+                    {isKm ? 'ឯកសារ PDF' : 'PDF File'}
+                  </label>
+                  <input
+                    ref={uploadFileInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                    className="w-full h-10 px-2.5 py-1.5 bg-white/[0.05] border border-white/15 rounded-xl text-xs text-white file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-white/12 file:text-white"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <button
+                    type="submit"
+                    disabled={isUploadingBook || !libraryConfigured || !uploadFile || !isOnline}
+                    className="w-full h-10 inline-flex items-center justify-center gap-1.5 px-4 bg-[#38BDF8] hover:bg-[#56CAF9] text-[#092731] text-xs font-bold rounded-xl transition-colors whitespace-nowrap cursor-pointer disabled:opacity-45"
+                  >
+                    {isUploadingBook ? (
+                      <DotsLoader size="xs" color="dark" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    <span className="tabular-nums">
+                      {isUploadingBook && uploadProgress
+                        ? `${uploadProgress.percent}%`
+                        : isKm
+                        ? 'បញ្ជូន'
+                        : 'Upload'}
+                    </span>
+                  </button>
+                </div>
+              </form>
+
+              {isUploadingBook && uploadProgress && (
+                <div className="mt-4 pt-3 border-t border-white/10 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-white/75 tabular-nums">
+                    <span>
+                      {uploadProgress.stage === 'cover'
+                        ? isKm
+                          ? 'កំពុងបង្កើតក្រប...'
+                          : 'Generating cover...'
+                        : uploadProgress.stage === 'refreshing'
+                        ? isKm
+                          ? 'កំពុងធ្វើបច្ចុប្បន្នភាព...'
+                          : 'Refreshing...'
+                        : isKm
+                        ? 'កំពុងបញ្ជូន PDF...'
+                        : 'Uploading PDF...'}
+                    </span>
+                    <span>
+                      {formatFileSize(uploadProgress.loadedBytes)} /{' '}
+                      {formatFileSize(uploadProgress.totalBytes)} ({uploadProgress.percent}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-[#38BDF8] transition-all duration-200"
+                      style={{ width: `${uploadProgress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
 
           {/* Books Table */}
-          <Card title={isKm ? 'បញ្ជីសៀវភៅក្នុង R2' : 'Books in R2'}>
-            <div className="space-y-4">
+          <section className="rounded-2xl bg-white/[0.04] border border-white/10 overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-white whitespace-nowrap">
+                {isKm ? 'បញ្ជីសៀវភៅ' : 'Books'}{' '}
+                <span className="text-white/55 font-normal tabular-nums">
+                  ({filteredLibraryBooks.length})
+                </span>
+              </h2>
               {libraryBooks.length > 0 && (
-                <div className="relative">
-                  <Search className="w-4 h-4 text-white/60 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 text-white/55 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={isKm ? 'ស្វែងរកសៀវភៅ មុខវិជ្ជា ឬថ្នាក់...' : 'Search books...'}
-                    className="w-full pl-9 pr-4 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/20 focus:border-[#38BDF8]"
+                    placeholder={isKm ? 'ស្វែងរកសៀវភៅ...' : 'Search books...'}
+                    className="w-full h-9 pl-8 pr-3 bg-white/[0.05] border border-white/15 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-[#38BDF8]"
                   />
                 </div>
               )}
+            </div>
 
-              {filteredLibraryBooks.length === 0 ? (
-                <div className="py-10 text-center text-sm text-white/70">
-                  {libraryConfigured
-                    ? isKm
-                      ? 'មិនទាន់មានឯកសារ PDF ក្នុង Bucket ទេ'
-                      : 'No PDF files found in bucket'
-                    : isKm
-                    ? 'រង់ចាំការភ្ជាប់ Cloudflare R2 Environment Variables'
-                    : 'Waiting for Cloudflare R2 configuration'}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs sm:text-sm">
-                    <thead>
-                      <tr className="border-b border-white/10 text-white/80 font-semibold">
-                        <th className="py-2.5 pr-3">{isKm ? 'ចំណងជើង' : 'Title'}</th>
-                        <th className="py-2.5 px-3">{isKm ? 'ថ្នាក់' : 'Grade'}</th>
-                        <th className="py-2.5 px-3">{isKm ? 'មុខវិជ្ជា' : 'Subject'}</th>
-                        <th className="py-2.5 px-3">{isKm ? 'ទំហំ' : 'Size'}</th>
-                        <th className="py-2.5 pl-3 text-right">{isKm ? 'សកម្មភាព' : 'Actions'}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/10">
-                      {filteredLibraryBooks.map((book) => (
-                        <tr key={book.r2_key} className="hover:bg-white/5">
-                          <td className="py-2.5 pr-3 font-medium text-white max-w-[280px]">
+            {filteredLibraryBooks.length === 0 ? (
+              <div className="py-12 text-center text-xs sm:text-sm text-white/60">
+                {isKm ? 'មិនមានសៀវភៅទេ' : 'No books found'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 text-white/65 font-medium">
+                      <th className="py-2.5 pl-4 sm:pl-5 pr-3">{isKm ? 'សៀវភៅ' : 'Title'}</th>
+                      <th className="py-2.5 px-3">{isKm ? 'ថ្នាក់' : 'Grade'}</th>
+                      <th className="py-2.5 px-3">{isKm ? 'មុខវិជ្ជា' : 'Subject'}</th>
+                      <th className="py-2.5 px-3 text-right">{isKm ? 'ទំហំ' : 'Size'}</th>
+                      <th className="py-2.5 pl-3 pr-4 sm:pr-5 text-right">{isKm ? 'សកម្មភាព' : 'Actions'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    {filteredLibraryBooks.map((book) => {
+                      const isEditing = editingBookKey === book.r2_key;
+                      return (
+                        <tr key={book.r2_key} className="hover:bg-white/[0.03] transition-colors">
+                          <td className="py-2.5 pl-4 sm:pl-5 pr-3 font-medium text-white max-w-[320px]">
                             <div className="flex items-center gap-2.5 min-w-0">
                               {book.cover_url ? (
                                 <img
@@ -1049,210 +1200,244 @@ export default function AdminPage() {
                                   alt={book.title}
                                   loading="lazy"
                                   referrerPolicy="no-referrer"
-                                  className="w-8 h-11 rounded object-cover object-top shrink-0 bg-white/10"
+                                  className="w-7 h-10 rounded object-cover object-top shrink-0 bg-white/10"
                                 />
                               ) : (
-                                <div className="w-8 h-11 rounded bg-white/[0.07] text-white/60 flex items-center justify-center shrink-0">
+                                <div className="w-7 h-10 rounded bg-white/[0.06] text-white/55 flex items-center justify-center shrink-0">
                                   <BookOpen className="w-3.5 h-3.5" />
                                 </div>
                               )}
-                              <span className="truncate">{book.title}</span>
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={editingBookTitle}
+                                  onChange={(e) => setEditingBookTitle(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleSaveBookTitle(book);
+                                    } else if (e.key === 'Escape') {
+                                      e.preventDefault();
+                                      handleCancelEditBook();
+                                    }
+                                  }}
+                                  autoFocus
+                                  maxLength={200}
+                                  disabled={isSavingBookTitle}
+                                  placeholder={isKm ? 'បញ្ចូលចំណងជើងសៀវភៅ' : 'Enter book title'}
+                                  className="w-full min-w-[160px] h-9 px-2.5 bg-white/[0.08] border border-[#38BDF8] rounded-lg text-xs sm:text-sm text-white placeholder:text-white/40 focus:outline-none"
+                                />
+                              ) : (
+                                <span className="truncate">{book.title}</span>
+                              )}
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 text-white/80 whitespace-nowrap tabular-nums">
+                          <td className="py-2.5 px-3 text-white/75 whitespace-nowrap tabular-nums">
                             {formatGradeLabel(book.grade, isKm)}
                           </td>
-                          <td className="py-2.5 px-3 text-white/80 whitespace-nowrap">
+                          <td className="py-2.5 px-3 text-white/75 whitespace-nowrap">
                             {book.subject_label}
                           </td>
-                          <td className="py-2.5 px-3 text-white/80 whitespace-nowrap tabular-nums">
+                          <td className="py-2.5 px-3 text-white/75 whitespace-nowrap tabular-nums text-right">
                             {formatFileSize(book.file_size)}
                           </td>
-                          <td className="py-2.5 pl-3 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-1.5">
-                              <a
-                                href={book.pdf_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="p-1.5 text-white/75 hover:text-white rounded-md hover:bg-white/10"
-                                title={isKm ? 'បើកមើល' : 'Open'}
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </a>
-                              <button
-                                type="button"
-                                disabled={deletingKey === book.r2_key}
-                                onClick={() => handleDeleteLibraryBook(book)}
-                                className="p-1.5 text-white/70 hover:text-rose-300 rounded-md hover:bg-rose-500/15 cursor-pointer disabled:opacity-50"
-                                title={isKm ? 'លុប' : 'Delete'}
-                              >
-                                {deletingKey === book.r2_key ? (
-                                  <DotsLoader size="xs" color="accent" />
-                                ) : (
-                                  <Trash2 className="w-4 h-4" />
-                                )}
-                              </button>
-                            </div>
+                          <td className="py-2.5 pl-3 pr-4 sm:pr-5 text-right whitespace-nowrap">
+                            {isEditing ? (
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={isSavingBookTitle || !editingBookTitle.trim()}
+                                  onClick={() => handleSaveBookTitle(book)}
+                                  className="p-1.5 text-[#092731] bg-[#38BDF8] hover:bg-[#56CAF9] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                  title={isKm ? 'រក្សាទុក' : 'Save'}
+                                >
+                                  {isSavingBookTitle ? (
+                                    <DotsLoader size="xs" color="dark" />
+                                  ) : (
+                                    <Check className="w-4 h-4" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSavingBookTitle}
+                                  onClick={handleCancelEditBook}
+                                  className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-50"
+                                  title={isKm ? 'បោះបង់' : 'Cancel'}
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditBook(book)}
+                                  disabled={!isOnline}
+                                  className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-40"
+                                  title={isKm ? 'កែចំណងជើង' : 'Edit title'}
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <a
+                                  href={book.pdf_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+                                  title={isKm ? 'បើកមើល' : 'Open'}
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                                <button
+                                  type="button"
+                                  disabled={deletingKey === book.r2_key}
+                                  onClick={() => handleDeleteLibraryBook(book)}
+                                  className="p-1.5 text-white/65 hover:text-rose-300 rounded-lg hover:bg-rose-500/15 transition-colors cursor-pointer disabled:opacity-50"
+                                  title={isKm ? 'លុប' : 'Delete'}
+                                >
+                                  {deletingKey === book.r2_key ? (
+                                    <DotsLoader size="xs" color="accent" />
+                                  ) : (
+                                    <Trash2 className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {activeAdminTab === 'users' && (
-        <Card title={isKm ? 'បញ្ជីអ្នកប្រើប្រាស់' : 'Registered Users'}>
-          <div className="space-y-4">
-            {students.length > 0 && (
-              <div className="relative">
-                <Search className="w-4 h-4 text-white/60 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={isKm ? 'ស្វែងរកតាមឈ្មោះ ឬ ID...' : 'Search by name or ID...'}
-                  className="w-full pl-9 pr-4 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/20 focus:border-[#38BDF8]"
-                />
-              </div>
-            )}
-
-            {filteredStudents.length === 0 ? (
-              <div className="py-10 text-center text-sm text-white/70">
-                {isKm ? 'មិនមានទិន្នន័យអ្នកប្រើប្រាស់' : 'No user records found'}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs sm:text-sm">
-                  <thead>
-                    <tr className="border-b border-white/10 text-white/80 font-semibold">
-                      <th className="py-2.5 pr-3">ID</th>
-                      <th className="py-2.5 px-3">{isKm ? 'ឈ្មោះ' : 'Name'}</th>
-                      <th className="py-2.5 px-3">{isKm ? 'ថ្នាក់' : 'Grade'}</th>
-                      <th className="py-2.5 px-3">{isKm ? 'អ៊ីម៉ែល' : 'Email'}</th>
-                      <th className="py-2.5 pl-3">{isKm ? 'តួនាទី' : 'Role'}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/10">
-                    {filteredStudents.map((s, idx) => (
-                      <tr key={s.id || s.student_id || idx} className="hover:bg-white/5">
-                        <td className="py-2.5 pr-3 font-medium text-white tabular-nums whitespace-nowrap">
-                          {s.student_id || '-'}
-                        </td>
-                        <td className="py-2.5 px-3 text-white whitespace-nowrap">
-                          {`${s.last_name || ''} ${s.first_name || ''}`.trim() || '-'}
-                        </td>
-                        <td className="py-2.5 px-3 text-white/80 whitespace-nowrap">
-                          {s.grade || '-'}
-                        </td>
-                        <td className="py-2.5 px-3 text-white/80 max-w-[200px] truncate">
-                          {s.email || '-'}
-                        </td>
-                        <td className="py-2.5 pl-3 text-white/80 whitespace-nowrap">
-                          {s.role || 'student'}
-                        </td>
-                      </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
-        </Card>
+          </section>
+        </div>
       )}
 
+      {/* Students Tab */}
+      {activeAdminTab === 'users' && (
+        <section className="rounded-2xl bg-white/[0.04] border border-white/10 overflow-hidden">
+          <div className="px-4 sm:px-5 py-3.5 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-white whitespace-nowrap">
+              {isKm ? 'បញ្ជីសិស្ស' : 'Students'}{' '}
+              <span className="text-white/55 font-normal tabular-nums">
+                ({filteredStudents.length})
+              </span>
+            </h2>
+            {students.length > 0 && (
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-white/55 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={isKm ? 'ស្វែងរកឈ្មោះ ឬ ID...' : 'Search name or ID...'}
+                  className="w-full h-9 pl-8 pr-3 bg-white/[0.05] border border-white/15 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-[#38BDF8]"
+                />
+              </div>
+            )}
+          </div>
+
+          {filteredStudents.length === 0 ? (
+            <div className="py-12 text-center text-xs sm:text-sm text-white/60">
+              {isKm ? 'មិនមានទិន្នន័យសិស្ស' : 'No student records found'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-white/65 font-medium">
+                    <th className="py-2.5 pl-4 sm:pl-5 pr-3">ID</th>
+                    <th className="py-2.5 px-3">{isKm ? 'ឈ្មោះ' : 'Name'}</th>
+                    <th className="py-2.5 px-3">{isKm ? 'ថ្នាក់' : 'Grade'}</th>
+                    <th className="py-2.5 px-3">{isKm ? 'អ៊ីម៉ែល' : 'Email'}</th>
+                    <th className="py-2.5 pl-3 pr-4 sm:pr-5 text-right">{isKm ? 'តួនាទី' : 'Role'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/10">
+                  {filteredStudents.map((s, idx) => (
+                    <tr key={s.id || s.student_id || idx} className="hover:bg-white/[0.03] transition-colors">
+                      <td className="py-2.5 pl-4 sm:pl-5 pr-3 font-mono text-xs text-white/90 tabular-nums whitespace-nowrap">
+                        {s.student_id || '-'}
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-white whitespace-nowrap">
+                        {`${s.last_name || ''} ${s.first_name || ''}`.trim() || '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-white/75 whitespace-nowrap">
+                        {s.grade || '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-white/75 max-w-[220px] truncate">
+                        {s.email || '-'}
+                      </td>
+                      <td className="py-2.5 pl-3 pr-4 sm:pr-5 text-white/70 whitespace-nowrap text-right">
+                        {s.role === 'admin' ? (isKm ? 'អ្នកគ្រប់គ្រង' : 'Admin') : isKm ? 'សិស្ស' : 'Student'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Saved Essays Tab */}
       {activeAdminTab === 'content' && (
-        <Card title={isKm ? 'តែងសេចក្ដីរក្សាទុកជាក់ស្ដែង' : 'Stored Essays'}>
-          <div className="space-y-4">
+        <section className="rounded-2xl bg-white/[0.04] border border-white/10 overflow-hidden">
+          <div className="px-4 sm:px-5 py-3.5 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-white whitespace-nowrap">
+              {isKm ? 'តែងសេចក្ដីរក្សាទុក' : 'Saved Essays'}{' '}
+              <span className="text-white/55 font-normal tabular-nums">
+                ({filteredEssays.length})
+              </span>
+            </h2>
             {savedEssays.length > 0 && (
-              <div className="relative">
-                <Search className="w-4 h-4 text-white/60 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-white/55 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={isKm ? 'ស្វែងរកប្រធាន...' : 'Search topic...'}
-                  className="w-full pl-9 pr-4 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/20 focus:border-[#38BDF8]"
+                  className="w-full h-9 pl-8 pr-3 bg-white/[0.05] border border-white/15 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-[#38BDF8]"
                 />
               </div>
             )}
+          </div>
 
+          <div className="px-4 sm:px-5">
             {filteredEssays.length === 0 ? (
-              <div className="py-10 text-center text-sm text-white/70">
+              <div className="py-12 text-center text-xs sm:text-sm text-white/60">
                 {isKm ? 'មិនមានតែងសេចក្ដីរក្សាទុកទេ' : 'No saved essays found'}
               </div>
             ) : (
               <div className="divide-y divide-white/10">
                 {filteredEssays.map((item) => (
-                  <div key={item.id} className="py-3 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-white/75 tabular-nums">
-                      <span className="font-semibold text-white">
-                        {item.essay?.essay_type_label}
-                      </span>
+                  <div key={item.id} className="py-3.5 space-y-1">
+                    <p className="text-sm font-medium text-white">
+                      {item.essay?.detected_topic}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-white/65 tabular-nums">
+                      <span>{item.essay?.essay_type_label}</span>
                       <span aria-hidden="true">·</span>
                       <span>{getGradeLabel(item.grade, isKm)}</span>
                       {item.wordCount > 0 && (
                         <>
                           <span aria-hidden="true">·</span>
                           <span>
-                            {isKm ? `${item.wordCount.toLocaleString()} ពាក្យ` : `${item.wordCount.toLocaleString()} words`}
+                            {isKm
+                              ? `${item.wordCount.toLocaleString()} ពាក្យ`
+                              : `${item.wordCount.toLocaleString()} words`}
                           </span>
                         </>
                       )}
                     </div>
-                    <p className="text-sm font-medium text-white">
-                      {item.essay?.detected_topic}
-                    </p>
-                    {item.note && (
-                      <p className="text-xs text-white/80">
-                        {isKm ? `កំណត់ចំណាំ៖ ${item.note}` : `Note: ${item.note}`}
-                      </p>
-                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
-        </Card>
-      )}
-
-      {activeAdminTab === 'settings' && (
-        <Card title={isKm ? 'ស្ថានភាពប្រព័ន្ធ' : 'System Status'}>
-          <div className="divide-y divide-white/10 text-xs sm:text-sm">
-            <div className="py-3 flex items-center justify-between gap-4">
-              <span className="text-white/75">{isKm ? 'ការតភ្ជាប់បណ្ដាញ' : 'Network'}</span>
-              <span className="font-semibold text-white">
-                {isOnline ? (isKm ? 'អនឡាញ' : 'Online') : 'Offline'}
-              </span>
-            </div>
-            <div className="py-3 flex items-center justify-between gap-4">
-              <span className="text-white/75">{isKm ? 'ការភ្ជាប់ Database' : 'Database'}</span>
-              <span className="font-semibold text-white">
-                {isSupabaseConfigured ? (isKm ? 'បានកំណត់រួចរាល់' : 'Configured') : (isKm ? 'មិនទាន់កំណត់' : 'Not configured')}
-              </span>
-            </div>
-            <div className="py-3 flex items-center justify-between gap-4">
-              <span className="text-white/75">{isKm ? 'ទំហំផ្ទុកក្នុងម៉ាស៊ីន' : 'Browser Storage'}</span>
-              <span className="font-semibold text-white tabular-nums">{storageSizeLabel}</span>
-            </div>
-            <div className="py-3 flex items-center justify-between gap-4">
-              <span className="text-white/75">Service Worker (Offline)</span>
-              <span className="font-semibold text-white">
-                {typeof navigator !== 'undefined' && 'serviceWorker' in navigator
-                  ? isKm
-                    ? 'គាំទ្រ'
-                    : 'Supported'
-                  : isKm
-                  ? 'មិនគាំទ្រ'
-                  : 'Unsupported'}
-              </span>
-            </div>
-          </div>
-        </Card>
+        </section>
       )}
     </div>
   );

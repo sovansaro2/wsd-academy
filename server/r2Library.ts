@@ -124,6 +124,48 @@ export function buildPublicPdfUrl(cfg: R2Config, key: string): string {
   return `/api/library/pdf-proxy?key=${encodeURIComponent(key)}`;
 }
 
+const BOOK_OVERRIDES_KEY = 'metadata/book-overrides.json';
+
+interface BookOverrideEntry {
+  title: string;
+  updatedAt?: string;
+}
+
+type BookOverridesMap = Record<string, BookOverrideEntry>;
+
+async function readR2BookOverrides(cfg: R2Config): Promise<BookOverridesMap> {
+  if (!cfg.configured) return {};
+  try {
+    const client = createR2Client(cfg);
+    const res = await client.send(
+      new GetObjectCommand({
+        Bucket: cfg.bucketName,
+        Key: BOOK_OVERRIDES_KEY,
+      })
+    );
+    const raw = await res.Body?.transformToString('utf-8');
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as BookOverridesMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeR2BookOverrides(cfg: R2Config, overrides: BookOverridesMap): Promise<void> {
+  if (!cfg.configured) return;
+  const client = createR2Client(cfg);
+  await client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: BOOK_OVERRIDES_KEY,
+      Body: JSON.stringify(overrides, null, 2),
+      ContentType: 'application/json; charset=utf-8',
+      CacheControl: 'no-cache',
+    })
+  );
+}
+
 export function getCoverKeyForPdf(pdfKey: string): string {
   const cleanKey = pdfKey.replace(/^\/+/, '');
   return `covers/${cleanKey}.jpg`;
@@ -261,6 +303,7 @@ export async function listR2Books(): Promise<{
   bucketName: string;
   books: LibraryBookRecord[];
   totalSizeBytes: number;
+  overriddenKeys: string[];
 }> {
   const cfg = getR2Config();
   if (!cfg.configured) {
@@ -270,12 +313,14 @@ export async function listR2Books(): Promise<{
       bucketName: cfg.bucketName,
       books: [],
       totalSizeBytes: 0,
+      overriddenKeys: [],
     };
   }
 
   const client = createR2Client(cfg);
   const pdfEntries: Array<{ key: string; size: number; lastModified: string }> = [];
   const coverKeys = new Set<string>();
+  let hasOverridesFile = false;
   let continuationToken: string | undefined;
   let totalSizeBytes = 0;
 
@@ -289,6 +334,10 @@ export async function listR2Books(): Promise<{
     for (const obj of response.Contents || []) {
       const key = obj.Key || '';
       if (!key || key.endsWith('/')) continue;
+      if (key === BOOK_OVERRIDES_KEY) {
+        hasOverridesFile = true;
+        continue;
+      }
       // Skip macOS AppleDouble hidden metadata files if dragged in Finder
       const baseName = key.split('/').pop() || '';
       if (baseName.startsWith('._') || baseName === '.DS_Store') continue;
@@ -309,8 +358,15 @@ export async function listR2Books(): Promise<{
     continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
   } while (continuationToken);
 
+  const r2Overrides = hasOverridesFile ? await readR2BookOverrides(cfg) : {};
+  const overriddenKeys: string[] = [];
+
   const books: LibraryBookRecord[] = pdfEntries.map((entry) => {
-    const book = parseBookMetadataFromKey(entry.key, entry.size, entry.lastModified, cfg);
+    const customTitle = r2Overrides[entry.key]?.title?.trim() || undefined;
+    if (customTitle) {
+      overriddenKeys.push(entry.key);
+    }
+    const book = parseBookMetadataFromKey(entry.key, entry.size, entry.lastModified, cfg, customTitle);
     const expectedCoverKey = getCoverKeyForPdf(entry.key);
     if (coverKeys.has(expectedCoverKey)) {
       book.cover_url = buildPublicCoverUrl(cfg, entry.key);
@@ -331,6 +387,7 @@ export async function listR2Books(): Promise<{
     bucketName: cfg.bucketName,
     books,
     totalSizeBytes,
+    overriddenKeys,
   };
 }
 
@@ -528,6 +585,100 @@ export async function deleteBookFromR2(key: string): Promise<void> {
   } catch {
     // Ignore if cover does not exist
   }
+
+  // Best-effort cleanup of title override if present
+  try {
+    const overrides = await readR2BookOverrides(cfg);
+    if (overrides[key]) {
+      delete overrides[key];
+      await writeR2BookOverrides(cfg, overrides);
+    }
+  } catch {
+    // Ignore override cleanup errors
+  }
+}
+
+export async function updateBookTitle(params: {
+  key: string;
+  title: string;
+  fileSize?: number;
+  lastModified?: string;
+  coverUrl?: string;
+}): Promise<{
+  book: LibraryBookRecord;
+  persistedR2: boolean;
+  persistedSupabase: boolean;
+}> {
+  const key = params.key.trim();
+  const cleanTitle = params.title.trim().slice(0, 200);
+  if (!key) {
+    throw new Error('Missing book key.');
+  }
+  if (!cleanTitle) {
+    throw new Error('សូមបញ្ចូលចំណងជើងសៀវភៅ។');
+  }
+
+  const cfg = getR2Config();
+  let persistedR2 = false;
+  let persistedSupabase = false;
+
+  if (cfg.configured) {
+    const overrides = await readR2BookOverrides(cfg);
+    overrides[key] = {
+      title: cleanTitle,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeR2BookOverrides(cfg, overrides);
+    persistedR2 = true;
+  }
+
+  const updatedBook = parseBookMetadataFromKey(
+    key,
+    Number(params.fileSize) || 0,
+    params.lastModified || new Date().toISOString(),
+    cfg,
+    cleanTitle
+  );
+  if (params.coverUrl) {
+    updatedBook.cover_url = params.coverUrl;
+  }
+
+  const supabase = getServerSupabaseClient();
+  if (supabase) {
+    try {
+      const { error } = await supabase.from('library_books').upsert(
+        {
+          r2_key: updatedBook.r2_key,
+          title: updatedBook.title,
+          grade: updatedBook.grade,
+          level: updatedBook.level,
+          subject: updatedBook.subject,
+          subject_label: updatedBook.subject_label,
+          pdf_url: updatedBook.pdf_url,
+          file_size: updatedBook.file_size,
+          last_modified: updatedBook.last_modified,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'r2_key' }
+      );
+      if (!error) {
+        persistedSupabase = true;
+      }
+    } catch {
+      // Non-fatal when R2 override already succeeded
+    }
+  }
+
+  if (!persistedR2 && !persistedSupabase) {
+    throw new Error('មិនអាចរក្សាទុកចំណងជើងសៀវភៅបានទេ។');
+  }
+
+  cachedPublicStats = null;
+  return {
+    book: updatedBook,
+    persistedR2,
+    persistedSupabase,
+  };
 }
 
 export async function uploadCoverToR2(params: {
