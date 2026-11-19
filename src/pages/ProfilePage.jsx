@@ -636,7 +636,7 @@ export default function ProfilePage() {
                         value={profileData.telegram}
                         onChange={(e) => setProfileData({...profileData, telegram: e.target.value})}
                         className="w-full px-3 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 transition"
-                        placeholder="@username"
+                        placeholder={isKm ? 'បញ្ចូលឈ្មោះគណនី Telegram' : 'Enter Telegram username'}
                       />
                     </div>
                   </div>

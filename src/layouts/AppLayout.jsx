@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { WifiOff } from 'lucide-react';
 import TopNavbar from '../components/layout/TopNavbar';
+import DesktopFooter from '../components/layout/DesktopFooter';
 import BottomNav from '../components/layout/BottomNav';
 import logoNameImg from '../assets/logoname.png';
 import RegisterModal from '../components/auth/RegisterModal';
@@ -82,6 +83,9 @@ export default function AppLayout() {
           <Outlet />
         </motion.div>
       </main>
+
+      {/* Desktop Footer */}
+      <DesktopFooter />
 
       {/* Mobile Bottom Navigation */}
       <BottomNav />

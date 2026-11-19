@@ -394,8 +394,8 @@ export default function SearchPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder={
               isKm
-                ? 'ស្វែងរកឈ្មោះសៀវភៅ មុខវិជ្ជា ថ្នាក់ទី (ឧ. ១២) ឬតែងសេចក្ដី...'
-                : 'Search textbooks, subjects, grades (e.g. 12), or saved essays...'
+                ? 'ស្វែងរកឈ្មោះសៀវភៅ មុខវិជ្ជា ថ្នាក់រៀន ឬតែងសេចក្ដី...'
+                : 'Search textbooks, subjects, grades, or saved essays...'
             }
             className="w-full pl-10 pr-10 py-3 bg-white/[0.06] border border-white/15 rounded-2xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 transition-all"
           />
@@ -537,8 +537,8 @@ export default function SearchPage() {
           </p>
           <p className="text-xs text-white/60">
             {isKm
-              ? 'សាកល្បងស្វែងរកតាមឈ្មោះមុខវិជ្ជា ឬលេខថ្នាក់ (ឧ. គណិតវិទ្យា, ១២)។'
-              : 'Try searching by subject name or grade number (e.g. Math, 12).'}
+              ? 'សាកល្បងស្វែងរកតាមឈ្មោះមុខវិជ្ជា ឬកម្រិតថ្នាក់។'
+              : 'Try searching by subject name or grade level.'}
           </p>
         </div>
       ) : (

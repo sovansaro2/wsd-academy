@@ -637,7 +637,7 @@ export default function HomePage() {
         <section className="space-y-4 pt-2 border-t border-white/10">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <span className="w-8 h-8 rounded-lg bg-[#F59E0B]/15 text-[#F59E0B] inline-flex items-center justify-center shrink-0">
+              <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/10 text-white/90 inline-flex items-center justify-center shrink-0">
                 <Clock className="w-4 h-4" />
               </span>
               <h2 className="font-kh-title text-lg sm:text-xl text-white">
@@ -815,7 +815,7 @@ export default function HomePage() {
         <section className="space-y-4 pt-2 border-t border-white/10">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <span className="w-8 h-8 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] inline-flex items-center justify-center shrink-0">
+              <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/10 text-white/90 inline-flex items-center justify-center shrink-0">
                 <BookOpen className="w-4 h-4" />
               </span>
               <h2 className="font-kh-title text-lg sm:text-xl text-white">
@@ -968,7 +968,7 @@ export default function HomePage() {
       {/* 4. Study Shortcuts (Real Existing Tools) */}
       <section className="space-y-4 pt-2 border-t border-white/10">
         <div className="flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-emerald-400/15 text-emerald-300 inline-flex items-center justify-center shrink-0">
+          <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/10 text-white/90 inline-flex items-center justify-center shrink-0">
             <LayoutGrid className="w-4 h-4" />
           </span>
           <h2 className="font-kh-title text-lg sm:text-xl text-white">

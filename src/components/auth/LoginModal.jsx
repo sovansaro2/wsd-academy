@@ -67,7 +67,7 @@ export default function LoginModal({ isOpen, onClose, onSwitchToRegister }) {
         <Input
           id="login-student-id"
           label={isKm ? 'លេខសម្គាល់សិស្ស' : 'Student ID'}
-          placeholder={isKm ? 'ឧ. STU-231007' : 'e.g. STU-231007'}
+          placeholder={isKm ? 'បញ្ចូលលេខសម្គាល់សិស្ស' : 'Enter student ID'}
           value={studentId}
           onChange={(e) => {
             setStudentId(e.target.value);
@@ -84,7 +84,7 @@ export default function LoginModal({ isOpen, onClose, onSwitchToRegister }) {
             id="login-password"
             label={isKm ? 'ពាក្យសម្ងាត់' : 'Password'}
             type={showPassword ? 'text' : 'password'}
-            placeholder="••••••••"
+            placeholder={isKm ? 'បញ្ចូលពាក្យសម្ងាត់' : 'Enter password'}
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);

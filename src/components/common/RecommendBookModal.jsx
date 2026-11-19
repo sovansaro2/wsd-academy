@@ -304,7 +304,7 @@ export default function RecommendBookModal({ isOpen, onClose }) {
           <Input
             id="recommend-book-title"
             label={isKm ? 'ឈ្មោះសៀវភៅ' : 'Book Title'}
-            placeholder={isKm ? 'ឧ. គណិតវិទ្យា ថ្នាក់ទី១២ / វិញ្ញាសាបាក់ឌុប' : 'e.g. Grade 12 Mathematics'}
+            placeholder={isKm ? 'បញ្ចូលឈ្មោះសៀវភៅ' : 'Enter book title'}
             value={bookTitle}
             onChange={(e) => {
               setBookTitle(e.target.value);
@@ -317,11 +317,7 @@ export default function RecommendBookModal({ isOpen, onClose }) {
           <Input
             id="recommend-book-category"
             label={isKm ? 'ប្រភេទសៀវភៅ' : 'Book Category'}
-            placeholder={
-              isKm
-                ? 'ឧ. សៀវភៅសិក្សាគោល, វិញ្ញាសា, រូបមន្ត, អក្សរសិល្ប៍...'
-                : 'e.g. Textbook, Exam Papers, Formulas, Literature...'
-            }
+            placeholder={isKm ? 'បញ្ចូលប្រភេទសៀវភៅ' : 'Enter book category'}
             value={bookCategory}
             onChange={(e) => {
               setBookCategory(e.target.value);
@@ -334,11 +330,7 @@ export default function RecommendBookModal({ isOpen, onClose }) {
           <Input
             id="recommend-source"
             label={isKm ? 'ប្រភពដើម' : 'Original Source'}
-            placeholder={
-              isKm
-                ? 'តំណភ្ជាប់ Link, ឈ្មោះគេហទំព័រ ឬ គ្រឹះស្ថានបោះពុម្ព...'
-                : 'Link, website name, or publisher...'
-            }
+            placeholder={isKm ? 'បញ្ចូលប្រភពដើម ឬតំណភ្ជាប់' : 'Enter original source or link'}
             value={originalSource}
             onChange={(e) => {
               setOriginalSource(e.target.value);

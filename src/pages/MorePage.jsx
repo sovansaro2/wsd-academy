@@ -13,6 +13,9 @@ import {
   BookCheck,
   Eraser,
   ShieldCheck,
+  TrendingUp,
+  BookOpen,
+  Settings,
 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { usePWAInstall } from '../hooks/usePWA';
@@ -58,17 +61,11 @@ export default function MorePage() {
     };
   }, [refreshDownloadedCount]);
 
-  const linkTiles = [
+  const studyTiles = [
     {
-      to: '/downloads',
-      icon: BookCheck,
-      label: isKm
-        ? downloadedCount > 0
-          ? `សៀវភៅបានទាញយក (${toKhmerNumber(downloadedCount)})`
-          : 'សៀវភៅបានទាញយក'
-        : downloadedCount > 0
-        ? `Downloaded Books (${downloadedCount})`
-        : 'Downloaded Books',
+      to: '/graph',
+      icon: TrendingUp,
+      label: isKm ? 'គូសសង់ក្រាហ្វ' : 'Graphing Lab',
     },
     {
       to: '/solver',
@@ -86,125 +83,166 @@ export default function MorePage() {
       label: isKm ? 'តែងសេចក្ដីរក្សាទុក' : 'Saved Essays',
     },
     {
+      to: '/downloads',
+      icon: BookCheck,
+      label: isKm
+        ? downloadedCount > 0
+          ? `សៀវភៅបានទាញយក (${toKhmerNumber(downloadedCount)})`
+          : 'សៀវភៅបានទាញយក'
+        : downloadedCount > 0
+        ? `Downloaded Books (${downloadedCount})`
+        : 'Downloaded Books',
+    },
+    {
       to: '/history',
       icon: History,
       label: isKm ? 'ប្រវត្តិសិក្សា' : 'Study History',
     },
+  ];
+
+  const generalItems = [
     {
+      id: 'more-recommend-book-btn',
+      type: 'button',
+      onClick: () => setIsRecommendOpen(true),
+      icon: BookPlus,
+      label: isKm ? 'ណែនាំសៀវភៅ' : 'Recommend Book',
+    },
+    {
+      id: 'more-support-btn',
+      type: 'button',
+      onClick: () => setIsSupportOpen(true),
+      icon: HeartHandshake,
+      label: isKm ? 'ឧបត្ថម្ភ' : 'Support',
+    },
+    {
+      id: 'more-clear-storage-btn',
+      type: 'button',
+      onClick: () => setIsClearStorageOpen(true),
+      icon: Eraser,
+      label: isKm ? 'សម្អាតទិន្នន័យ' : 'Clean Storage',
+    },
+    {
+      id: 'more-language-btn',
+      type: 'button',
+      onClick: toggleLanguage,
+      icon: Globe,
+      label: isKm ? 'ប្ដូរភាសា · ខ្មែរ / EN' : 'Language · EN / KH',
+    },
+    {
+      id: 'more-admin-link',
+      type: 'link',
       to: '/admin',
       icon: ShieldCheck,
       label: isKm ? 'ផ្ទាំងគ្រប់គ្រង' : 'Admin Panel',
     },
+    ...(isInstallable && !isInstalled
+      ? [
+          {
+            id: 'more-install-btn',
+            type: 'button',
+            onClick: install,
+            icon: Download,
+            label: isKm ? 'ដំឡើងកម្មវិធី' : 'Install App',
+          },
+        ]
+      : []),
   ];
 
   return (
-    <div id="more-page" className="space-y-5 font-kh-body pb-8">
+    <div id="more-page" className="space-y-8 font-kh-body pb-8">
       <header className="pb-4 border-b border-white/10">
         <h1 className="font-kh-title text-2xl text-white">
           {isKm ? 'ច្រើនទៀត' : 'More'}
         </h1>
       </header>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-        {/* Book Recommendation Tile */}
-        <motion.button
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={tileTransition(0)}
-          type="button"
-          id="more-recommend-book-btn"
-          onClick={() => setIsRecommendOpen(true)}
-          className={TILE_CLASSES}
-        >
-          <BookPlus className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
-          <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
-            {isKm ? 'ណែនាំសៀវភៅ' : 'Recommend Book'}
+      {/* Section 1: Study Features (ផ្នែកសិក្សា) */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2.5 pb-2 border-b border-white/10">
+          <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/10 text-white/90 inline-flex items-center justify-center shrink-0">
+            <BookOpen className="w-4 h-4" />
           </span>
-        </motion.button>
+          <h2 className="font-kh-title text-lg text-white">
+            {isKm ? 'ផ្នែកសិក្សា' : 'Study Tools'}
+          </h2>
+        </div>
 
-        {/* Support / Donate QR Tile */}
-        <motion.button
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={tileTransition(1)}
-          type="button"
-          id="more-support-btn"
-          onClick={() => setIsSupportOpen(true)}
-          className={TILE_CLASSES}
-        >
-          <HeartHandshake className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
-          <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
-            {isKm ? 'ឧបត្ថម្ភ' : 'Support'}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+          {studyTiles.map((item, idx) => {
+            const Icon = item.icon;
+            return (
+              <motion.div
+                key={item.to}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={tileTransition(idx)}
+              >
+                <Link to={item.to} className={`${TILE_CLASSES} h-full`}>
+                  <Icon className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
+                  <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
+                    {item.label}
+                  </span>
+                </Link>
+              </motion.div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Section 2: General Features (ផ្នែកទូទៅ) */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2.5 pb-2 border-b border-white/10">
+          <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/10 text-white/90 inline-flex items-center justify-center shrink-0">
+            <Settings className="w-4 h-4" />
           </span>
-        </motion.button>
+          <h2 className="font-kh-title text-lg text-white">
+            {isKm ? 'ផ្នែកទូទៅ' : 'General'}
+          </h2>
+        </div>
 
-        {linkTiles.map((item, idx) => {
-          const Icon = item.icon;
-          return (
-            <motion.div
-              key={item.to}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={tileTransition(idx + 2)}
-            >
-              <Link to={item.to} className={`${TILE_CLASSES} h-full`}>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+          {generalItems.map((item, idx) => {
+            const Icon = item.icon;
+            const delayIdx = studyTiles.length + idx;
+            if (item.type === 'link') {
+              return (
+                <motion.div
+                  key={item.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={tileTransition(delayIdx)}
+                >
+                  <Link to={item.to} id={item.id} className={`${TILE_CLASSES} h-full`}>
+                    <Icon className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
+                    <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
+                      {item.label}
+                    </span>
+                  </Link>
+                </motion.div>
+              );
+            }
+
+            return (
+              <motion.button
+                key={item.id}
+                id={item.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={tileTransition(delayIdx)}
+                type="button"
+                onClick={item.onClick}
+                className={TILE_CLASSES}
+              >
                 <Icon className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
                 <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
                   {item.label}
                 </span>
-              </Link>
-            </motion.div>
-          );
-        })}
-
-        {/* Clean Device Storage Tile */}
-        <motion.button
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={tileTransition(8)}
-          type="button"
-          id="more-clear-storage-btn"
-          onClick={() => setIsClearStorageOpen(true)}
-          className={TILE_CLASSES}
-        >
-          <Eraser className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
-          <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
-            {isKm ? 'សម្អាតទិន្នន័យ' : 'Clean Storage'}
-          </span>
-        </motion.button>
-
-        {/* Language Toggle Tile */}
-        <motion.button
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={tileTransition(9)}
-          type="button"
-          onClick={toggleLanguage}
-          className={TILE_CLASSES}
-        >
-          <Globe className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
-          <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
-            {isKm ? 'ប្ដូរភាសា · ខ្មែរ / EN' : 'Language · EN / KH'}
-          </span>
-        </motion.button>
-
-        {/* Optional PWA Install Tile when installable */}
-        {isInstallable && !isInstalled && (
-          <motion.button
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={tileTransition(10)}
-            type="button"
-            onClick={install}
-            className={TILE_CLASSES}
-          >
-            <Download className="w-7 h-7 text-[#38BDF8] group-hover:scale-105 transition-transform duration-200 ease-out" />
-            <span className="text-xs sm:text-sm font-semibold text-white leading-snug">
-              {isKm ? 'ដំឡើងកម្មវិធី' : 'Install App'}
-            </span>
-          </motion.button>
-        )}
-      </div>
+              </motion.button>
+            );
+          })}
+        </div>
+      </section>
 
       <RecommendBookModal
         isOpen={isRecommendOpen}

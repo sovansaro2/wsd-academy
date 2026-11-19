@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type, Schema } from '@google/genai';
+import { GoogleGenAI, Type, Schema, ThinkingLevel } from '@google/genai';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { Readable } from 'node:stream';
@@ -413,6 +413,489 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
       }
       console.error('Error in /api/essay:', error);
       res.status(200).json({ error: 'មានបញ្ហាក្នុងការតែងសេចក្ដី សូមព្យាយាមម្ដងទៀត!' });
+    }
+  });
+
+  const graphExplainSchema: Schema = {
+    type: Type.OBJECT,
+    properties: {
+      overview: {
+        type: Type.STRING,
+        description: 'A clear 1-2 sentence overview of what the graphed equation(s) represent.',
+      },
+      sections: {
+        type: Type.ARRAY,
+        description: 'Ordered pedagogical study sections explaining domain, asymptotes, derivatives/variation, shape, intercepts, and intersections.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: 'Short section heading.' },
+            content: {
+              type: Type.STRING,
+              description: 'Clear step-by-step explanation using clean Markdown and LaTeX math ($...$ or $$...$$).',
+            },
+          },
+          required: ['title', 'content'],
+        },
+      },
+      study_tip: {
+        type: Type.STRING,
+        description: 'Practical tip for sketching or reading this graph in exams.',
+      },
+    },
+    required: ['overview', 'sections', 'study_tip'],
+  };
+
+  app.post('/api/explain_graph', async (req, res) => {
+    try {
+      const expressions = Array.isArray(req.body?.expressions) ? req.body.expressions : [];
+      const language = req.body?.language === 'en' ? 'en' : 'km';
+      const params = req.body?.params || {};
+      const analysisSummary = req.body?.analysisSummary || {};
+
+      const validExprs = expressions
+        .map((e: any) => (typeof e?.expr === 'string' ? e.expr.trim() : ''))
+        .filter(Boolean);
+
+      if (validExprs.length === 0) {
+        return res.status(400).json({
+          error:
+            language === 'km'
+              ? 'សូមបញ្ចូលសមីការយ៉ាងហោចណាស់មួយដើម្បីពន្យល់។'
+              : 'Please enter at least one equation to explain.',
+        });
+      }
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.status(503).json({
+          error:
+            language === 'km'
+              ? 'ប្រព័ន្ធពន្យល់មិនទាន់បានកំណត់ GEMINI_API_KEY ទេ។'
+              : 'GEMINI_API_KEY is not configured on the server.',
+        });
+      }
+
+      const targetLang =
+        language === 'km'
+          ? 'Clear, academic Cambodian Khmer (MoEYS high-school mathematics terminology such as ដែនកំណត់, អាស៊ីមតូតឈរ/ដេក/ទ្រេត, ទិសដៅប្រែប្រួល, ចំណុចបរមា, ចំណុចរបត់, អាំងតេក្រាលកំណត់).'
+          : 'Clear, academic English high-school calculus & analytic geometry terminology.';
+
+      const prompt = `You are a supportive high-school mathematics teacher explaining plotted curves on an interactive coordinate plane.
+Write the entire explanation in: ${targetLang}
+
+Plotted equation(s):
+${expressions
+  .filter((e: any) => typeof e?.expr === 'string' && e.expr.trim())
+  .map((e: any, i: number) => `${i + 1}. \`${e.expr.trim()}\` (type: ${e.kind || 'function'})`)
+  .join('\n')}
+
+Parameter values (if used): a = ${params.a ?? 1}, b = ${params.b ?? 0}, c = ${params.c ?? 0}
+
+Verified numerical features from the graph canvas (use these exact figures cleanly rather than guessing):
+${JSON.stringify(analysisSummary, null, 2)}
+
+Requirements:
+1. Keep explanations concise, pedagogical, and well-structured so high-school students immediately understand WHY the graph looks the way it does.
+2. Explain:
+   - What type of curve/equation/inequality/conic this is and its Domain of definition ($D$).
+   - Intercepts ($Ox$, $Oy$) and asymptotes (vertical, horizontal, or oblique slant $y = mx + b$ with brief limit reasoning if applicable).
+   - How the function rises/falls (ទិសដៅប្រែប្រួល / derivative $f'(x)$ sign), extrema (កំពូល/បរមា), or concavity/inflection points if present.
+   - If multiple curves intersect, or a tangent line / definite integral / shaded inequality region is active, explain their geometric meaning clearly.
+3. Wrap all inline math in $...$ and standalone equations in $$...$$. Double-escape all LaTeX backslashes inside JSON strings.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
+          responseMimeType: 'application/json',
+          responseSchema: graphExplainSchema,
+        },
+      });
+
+      const rawText = (response.text ?? '{}').trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const sanitized = rawText.replace(/\\([^nrtbf"\\/])/g, '\\\\$1');
+        parsed = JSON.parse(sanitized);
+      }
+
+      res.json({
+        ok: true,
+        overview: typeof parsed?.overview === 'string' ? parsed.overview.trim() : '',
+        sections: Array.isArray(parsed?.sections) ? parsed.sections : [],
+        study_tip: typeof parsed?.study_tip === 'string' ? parsed.study_tip.trim() : '',
+      });
+    } catch (error: any) {
+      if (
+        error?.status === 429 ||
+        error?.toString().includes('429') ||
+        error?.toString().includes('Quota exceeded')
+      ) {
+        return res.status(429).json({
+          error: 'ប្រព័ន្ធកំពុងរវល់ខ្លាំង។ សូមព្យាយាមម្ដងទៀត!',
+        });
+      }
+      console.error('Error in /api/explain_graph:', error);
+      res.status(500).json({
+        error: 'មិនអាចបង្កើតការពន្យល់ក្រាហ្វលម្អិតបានទេ សូមព្យាយាមម្ដងទៀត!',
+      });
+    }
+  });
+
+  const graphImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 },
+  });
+
+  const handleGraphImageMiddleware = (req: any, res: any, next: any) => {
+    graphImageUpload.single('image')(req, res, (err: any) => {
+      if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            ok: false,
+            error: 'ទំហំរូបភាពធំពេក (អតិបរមា 15MB)។ សូមជ្រើសរើសរូបភាពតូចជាងនេះ!',
+          });
+        }
+        return res.status(400).json({
+          ok: false,
+          error: 'មិនអាចអានឯកសាររូបភាពបានទេ។ សូមព្យាយាមម្ដងទៀត!',
+        });
+      }
+      next();
+    });
+  };
+
+  const sanitizePlottableExpr = (raw: string): string => {
+    if (typeof raw !== 'string') return '';
+    let s = raw.trim();
+    // Strip markdown code ticks or $ delimiters
+    s = s.replace(/^[`$]+|[`$]+$/g, '').trim();
+    // Convert simple LaTeX \frac{a}{b} -> ((a)/(b)) iteratively (handles up to 4 levels)
+    for (let i = 0; i < 4; i += 1) {
+      const next = s.replace(/\\d?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '(($1)/($2))');
+      if (next === s) break;
+      s = next;
+    }
+    // Convert LaTeX \sqrt{...} -> sqrt(...)
+    for (let i = 0; i < 4; i += 1) {
+      const next = s.replace(/\\sqrt\s*\{([^{}]+)\}/g, 'sqrt($1)');
+      if (next === s) break;
+      s = next;
+    }
+    // Convert LaTeX operators & delimiters
+    s = s
+      .replace(/\\left\s*\|/g, '|')
+      .replace(/\\right\s*\|/g, '|')
+      .replace(/\\left|\\right/g, '')
+      .replace(/\\cdot|\\times/g, '*')
+      .replace(/\\div/g, '/')
+      .replace(/\\pi\b/g, 'pi')
+      .replace(/\\leq|\\le\b/g, '<=')
+      .replace(/\\geq|\\ge\b/g, '>=')
+      .replace(/\\(sin|cos|tan|cot|sec|csc|ln|log|exp|abs)\b/g, '$1')
+      .replace(/\^\{([^{}]+)\}/g, '^($1)')
+      .replace(/\{|\}/g, (m) => (m === '{' ? '(' : ')'))
+      .replace(/\s+/g, ' ')
+      .trim();
+    return s;
+  };
+
+  const graphFromImageSchema: Schema = {
+    type: Type.OBJECT,
+    properties: {
+      is_valid_math: {
+        type: Type.BOOLEAN,
+        description:
+          'True if the image contains at least one plottable math function, equation, inequality, conic, graph sketch, or coordinate points. False for unrelated photos.',
+      },
+      rejection_reason: {
+        type: Type.STRING,
+        description: 'Friendly explanation in the requested language if is_valid_math is false.',
+      },
+      summary: {
+        type: Type.STRING,
+        description:
+          'Short 1-sentence summary in the requested language describing what equations/points were read from the photo.',
+      },
+      equations: {
+        type: Type.ARRAY,
+        description:
+          'List of plottable equations/functions/inequalities formatted strictly in ASCII math parser syntax (NO LaTeX commands).',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            expr: {
+              type: Type.STRING,
+              description:
+                'Plottable expression such as "x^2 - 4x + 3", "(x^2 + 1)/(x - 1)", "x^2 + y^2 = 9", "y <= 2x + 1", or "x = 2".',
+            },
+            show_derivative: {
+              type: Type.BOOLEAN,
+              description: 'True only if the problem explicitly asks to also plot the derivative f\'(x).',
+            },
+          },
+          required: ['expr', 'show_derivative'],
+        },
+      },
+      points: {
+        type: Type.ARRAY,
+        description: 'Explicitly mentioned coordinate points like A(1, 2), B(-3, 4) to plot on the plane.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            label: { type: Type.STRING, description: 'Short point label such as A, B, C, M.' },
+            x: { type: Type.NUMBER },
+            y: { type: Type.NUMBER },
+          },
+          required: ['label', 'x', 'y'],
+        },
+      },
+      connect_points_mode: {
+        type: Type.STRING,
+        description: 'One of "none", "polyline", or "polygon" depending on whether the points form a segment or triangle/polygon.',
+      },
+      use_pi_axis: {
+        type: Type.BOOLEAN,
+        description: 'True if trigonometric functions (sin, cos, tan, cot) are extracted.',
+      },
+      tangent: {
+        type: Type.OBJECT,
+        properties: {
+          enabled: { type: Type.BOOLEAN },
+          x0: { type: Type.NUMBER },
+        },
+        required: ['enabled', 'x0'],
+      },
+      integral: {
+        type: Type.OBJECT,
+        properties: {
+          enabled: { type: Type.BOOLEAN },
+          a: { type: Type.NUMBER },
+          b: { type: Type.NUMBER },
+        },
+        required: ['enabled', 'a', 'b'],
+      },
+      params: {
+        type: Type.OBJECT,
+        properties: {
+          a: { type: Type.NUMBER },
+          b: { type: Type.NUMBER },
+          c: { type: Type.NUMBER },
+        },
+        required: ['a', 'b', 'c'],
+      },
+      suggested_view: {
+        type: Type.OBJECT,
+        properties: {
+          centerX: { type: Type.NUMBER },
+          centerY: { type: Type.NUMBER },
+          scale: { type: Type.NUMBER, description: 'Pixels per unit, usually between 18 and 75 (42 is default).' },
+        },
+        required: ['centerX', 'centerY', 'scale'],
+      },
+    },
+    required: [
+      'is_valid_math',
+      'rejection_reason',
+      'summary',
+      'equations',
+      'points',
+      'connect_points_mode',
+      'use_pi_axis',
+      'tangent',
+      'integral',
+      'params',
+      'suggested_view',
+    ],
+  };
+
+  app.post('/api/graph_from_image', handleGraphImageMiddleware, async (req, res) => {
+    try {
+      const file = req.file;
+      const language = req.body?.language === 'en' ? 'en' : 'km';
+
+      if (!file || !file.buffer?.length) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            language === 'km'
+              ? 'សូមថត ឬជ្រើសរើសរូបភាពលំហាត់គណិតវិទ្យាជាមុនសិន។'
+              : 'Please upload or capture a math photo first.',
+        });
+      }
+
+      if (!file.mimetype?.startsWith('image/')) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            language === 'km'
+              ? 'អនុញ្ញាតតែឯកសាររូបភាពប៉ុណ្ណោះ (JPG, PNG, WebP)។'
+              : 'Only image files are supported.',
+        });
+      }
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.status(503).json({
+          ok: false,
+          error:
+            language === 'km'
+              ? 'ប្រព័ន្ធស្កេនរូបភាពមិនទាន់បានកំណត់ GEMINI_API_KEY ទេ។'
+              : 'GEMINI_API_KEY is not configured on the server.',
+        });
+      }
+
+      const prompt = `You are a precision mathematics OCR & graphing parser for Cambodian high-school (MoEYS / BacII) and general STEM students.
+Inspect the uploaded image (which may be a handwritten notebook, printed textbook, exam paper, whiteboard, or a hand-drawn graph sketch).
+
+Output language for "summary" and "rejection_reason": ${language === 'km' ? 'Natural Cambodian Khmer' : 'English'}.
+
+STRICT PARSER SYNTAX RULES FOR "equations[].expr":
+- Output ONLY pure ASCII parser syntax compatible with a custom math evaluator — NEVER use LaTeX commands (NO \\frac, \\sqrt, \\cdot, \\times, \\pi, \\left, \\right, braces {}).
+- Supported functions: sin(), cos(), tan(), cot(), sec(), csc(), asin(), acos(), atan(), sqrt(), cbrt(), abs(), ln(), log(), log2(), exp().
+- Supported constants: pi, e.
+- Supported variables: x, y (and optional slider parameters a, b, c).
+- Supported forms:
+  1. Explicit function: "x^2 - 4x + 3", "(x^2 + 1)/(x - 1)", "e^x - 2", "ln(x + 1)", "sin(2x)"
+     (For f(x) = ... or y = ..., output just the RHS expression like "x^2 - 4x + 3", OR "y = ..." — plain RHS is preferred for standard functions.)
+  2. Vertical line: "x = 2"
+  3. Inequality: "y <= x + 2", "y > x^2 - 1", "x^2 + y^2 <= 9"
+  4. Implicit curve / conic: "x^2 + y^2 = 9", "(x - 2)^2 + (y + 1)^2 = 4", "x^2/16 + y^2/4 = 1", "x = y^2"
+- Always use explicit parentheses for fractions and negative exponents: "(x^2 + 1)/(x - 1)", "x^(-2)", "e^(-x)".
+- If the image shows an equation in another variable like t or u (e.g. f(t) = t^2 - 3t), rewrite it using x: "x^2 - 3x".
+- If the image shows a system of equations (e.g. find intersection of two curves, or y = f(x) and a line d: y = mx + p), include ALL curves in "equations" (up to 5).
+- If the image contains a curve with a parameter like m or k without a fixed value, map that parameter to "a" and set params = { a: 1, b: 0, c: 0 }. Otherwise set params = { a: 1, b: 0, c: 0 }.
+- If the problem asks for a tangent line at a specific x_0 (e.g. "សមីការបន្ទាត់ប៉ះត្រង់ x = 2"), set tangent = { enabled: true, x0: 2 }. Otherwise { enabled: false, x0: 1 }.
+- If the problem asks for the area or definite integral between x = a and x = b (e.g. "គណនាផ្ទៃក្រឡាពី x = 0 ដល់ x = 3"), set integral = { enabled: true, a: 0, b: 3 }. Otherwise { enabled: false, a: 0, b: 3 }.
+- If the image lists geometric coordinate points (e.g. A(1, 2), B(4, -1), C(-2, 3)), extract them into "points" and set connect_points_mode to "polygon" (if triangle/quadrilateral/polygon), "polyline" (if line segment), or "none".
+- If the image is ONLY a hand-drawn graph/curve without written formula text, infer the cleanest matching equation(s) from the visible intercepts/vertex/shape and mention in summary that it was inferred from the graph sketch.
+- Set suggested_view ({ centerX, centerY, scale }) so the key features (vertex, circle, asymptotes, points) are nicely centered on screen (default { centerX: 0, centerY: 0, scale: 42 }; use smaller scale like 22-30 for large radii/values, or shift centerX/centerY if the curve is centered far from origin).
+- If the image has NO math equations, functions, graphs, or coordinate points at all (e.g. random selfie, food, blank image), set is_valid_math = false and give a polite Khmer/English rejection_reason.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                data: file.buffer.toString('base64'),
+                mimeType: file.mimetype || 'image/jpeg',
+              },
+            },
+            { text: prompt },
+          ],
+        },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
+          responseMimeType: 'application/json',
+          responseSchema: graphFromImageSchema,
+        },
+      });
+
+      const rawText = (response.text ?? '{}').trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const sanitized = rawText.replace(/\\([^nrtbf"\\/])/g, '\\\\$1');
+        parsed = JSON.parse(sanitized);
+      }
+
+      if (!parsed?.is_valid_math) {
+        return res.json({
+          ok: true,
+          is_valid_math: false,
+          rejection_reason:
+            parsed?.rejection_reason ||
+            (language === 'km'
+              ? 'រកមិនឃើញសមីការ ឬអនុគមន៍គណិតវិទ្យាក្នុងរូបភាពនេះទេ។ សូមថតរូបលំហាត់ឲ្យច្បាស់ល្អ!'
+              : 'No plottable math equations or points were found in this image.'),
+          summary: '',
+          equations: [],
+          points: [],
+        });
+      }
+
+      const cleanedEquations = (Array.isArray(parsed.equations) ? parsed.equations : [])
+        .map((item: any) => ({
+          expr: sanitizePlottableExpr(item?.expr || ''),
+          show_derivative: Boolean(item?.show_derivative),
+        }))
+        .filter((item: any) => item.expr.length > 0)
+        .slice(0, 5);
+
+      const cleanedPoints = (Array.isArray(parsed.points) ? parsed.points : [])
+        .filter((pt: any) => Number.isFinite(Number(pt?.x)) && Number.isFinite(Number(pt?.y)))
+        .map((pt: any, idx: number) => ({
+          label:
+            typeof pt?.label === 'string' && pt.label.trim()
+              ? pt.label.trim().slice(0, 4)
+              : String.fromCharCode(65 + (idx % 26)),
+          x: Number(pt.x),
+          y: Number(pt.y),
+        }))
+        .slice(0, 12);
+
+      const connectMode =
+        parsed.connect_points_mode === 'polygon' || parsed.connect_points_mode === 'polyline'
+          ? parsed.connect_points_mode
+          : 'none';
+
+      const sv = parsed.suggested_view || {};
+      const suggestedView = {
+        centerX: Number.isFinite(Number(sv.centerX)) ? Math.max(-200, Math.min(200, Number(sv.centerX))) : 0,
+        centerY: Number.isFinite(Number(sv.centerY)) ? Math.max(-200, Math.min(200, Number(sv.centerY))) : 0,
+        scale: Number.isFinite(Number(sv.scale)) ? Math.max(12, Math.min(160, Number(sv.scale))) : 42,
+      };
+
+      res.json({
+        ok: true,
+        is_valid_math: true,
+        rejection_reason: '',
+        summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+        equations: cleanedEquations,
+        points: cleanedPoints,
+        connect_points_mode: connectMode,
+        use_pi_axis: Boolean(parsed.use_pi_axis),
+        tangent: {
+          enabled: Boolean(parsed?.tangent?.enabled) && Number.isFinite(Number(parsed?.tangent?.x0)),
+          x0: Number.isFinite(Number(parsed?.tangent?.x0)) ? Number(parsed.tangent.x0) : 1,
+        },
+        integral: {
+          enabled:
+            Boolean(parsed?.integral?.enabled) &&
+            Number.isFinite(Number(parsed?.integral?.a)) &&
+            Number.isFinite(Number(parsed?.integral?.b)),
+          a: Number.isFinite(Number(parsed?.integral?.a)) ? Number(parsed.integral.a) : 0,
+          b: Number.isFinite(Number(parsed?.integral?.b)) ? Number(parsed.integral.b) : 3,
+        },
+        params: {
+          a: Number.isFinite(Number(parsed?.params?.a)) ? Number(parsed.params.a) : 1,
+          b: Number.isFinite(Number(parsed?.params?.b)) ? Number(parsed.params.b) : 0,
+          c: Number.isFinite(Number(parsed?.params?.c)) ? Number(parsed.params.c) : 0,
+        },
+        suggested_view: suggestedView,
+      });
+    } catch (error: any) {
+      if (
+        error?.status === 429 ||
+        error?.toString().includes('429') ||
+        error?.toString().includes('Quota exceeded')
+      ) {
+        return res.status(429).json({
+          ok: false,
+          error: 'ប្រព័ន្ធកំពុងរវល់ខ្លាំង។ សូមព្យាយាមម្ដងទៀត!',
+        });
+      }
+      console.error('Error in /api/graph_from_image:', error);
+      res.status(500).json({
+        ok: false,
+        error: 'មិនអាចអានសមីការពីរូបភាពបានទេ សូមព្យាយាមម្ដងទៀត!',
+      });
     }
   });
 
@@ -1092,6 +1575,139 @@ Input: ${text || 'Solve based on the uploaded problem image.'}
       if (chunkedFilePath) {
         await fs.promises.unlink(chunkedFilePath).catch(() => {});
       }
+    }
+  });
+
+  app.post('/api/graph_feedback', async (req, res) => {
+    try {
+      const studentName =
+        typeof req.body?.studentName === 'string' ? req.body.studentName.trim().slice(0, 120) : '';
+      const studentId =
+        typeof req.body?.studentId === 'string' ? req.body.studentId.trim().slice(0, 80) : '';
+      const category =
+        typeof req.body?.category === 'string' ? req.body.category.trim() : 'feature';
+      const message =
+        typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 2000) : '';
+      const currentEquations = Array.isArray(req.body?.currentEquations)
+        ? req.body.currentEquations
+            .map((e: any) => (typeof e === 'string' ? e.trim() : ''))
+            .filter(Boolean)
+            .slice(0, 6)
+        : [];
+
+      if (!message || message.length < 3) {
+        return res.status(400).json({
+          ok: false,
+          error: 'សូមសរសេរសំណើកែសម្រួល ឬមតិយោបល់របស់អ្នកជាមុនសិន។',
+        });
+      }
+
+      const botToken = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+      if (!botToken) {
+        return res.status(503).json({
+          ok: false,
+          error: 'មិនទាន់បានកំណត់ TELEGRAM_BOT_TOKEN នៅក្នុងប្រព័ន្ធទេ។',
+        });
+      }
+
+      const adminUsername = (process.env.TELEGRAM_ADMIN_USERNAME || 'sovansaro')
+        .trim()
+        .replace(/^@/, '')
+        .toLowerCase();
+
+      if (!cachedTelegramAdminChatId) {
+        try {
+          const updatesRes = await fetch(
+            `https://api.telegram.org/bot${botToken}/getUpdates?limit=100`
+          );
+          const updatesData: any = await updatesRes.json().catch(() => null);
+          if (updatesData?.ok && Array.isArray(updatesData.result)) {
+            for (let i = updatesData.result.length - 1; i >= 0; i -= 1) {
+              const upd = updatesData.result[i];
+              const msg = upd?.message || upd?.edited_message || upd?.callback_query?.message;
+              const chat = msg?.chat || upd?.my_chat_member?.chat;
+              const from = msg?.from || upd?.my_chat_member?.from;
+              const chatUser = String(chat?.username || '').toLowerCase();
+              const fromUser = String(from?.username || '').toLowerCase();
+              if ((chatUser === adminUsername || fromUser === adminUsername) && chat?.id) {
+                cachedTelegramAdminChatId = chat.id;
+                break;
+              }
+            }
+          }
+        } catch (lookupErr) {
+          console.warn('Telegram getUpdates lookup skipped:', lookupErr);
+        }
+      }
+
+      const targetChatId = cachedTelegramAdminChatId || `@${adminUsername}`;
+
+      const categoryLabels: Record<string, string> = {
+        feature: 'បន្ថែមមុខងារថ្មី',
+        bug: 'កែកំហុសបច្ចេកទេស',
+        accuracy: 'ភាពត្រឹមត្រូវក្រាហ្វ / សមីការ',
+        other: 'មតិយោបល់ទូទៅ',
+      };
+      const categoryText = categoryLabels[category] || categoryLabels.other;
+
+      const lines = [
+        '📈 <b>សំណើកែសម្រួលមុខងារគូសក្រាហ្វ — WSD Academy</b>',
+        '',
+        `👤 <b>ឈ្មោះសិស្ស៖</b> ${escapeTelegramHtml(studentName || 'សិស្សមិនបញ្ចេញឈ្មោះ')}`,
+        ...(studentId ? [`🪪 <b>លេខសម្គាល់សិស្ស៖</b> ${escapeTelegramHtml(studentId)}`] : []),
+        `🏷️ <b>ប្រភេទសំណើ៖</b> ${escapeTelegramHtml(categoryText)}`,
+        ...(currentEquations.length > 0
+          ? [
+              `📐 <b>សមីការកំពុងគូស៖</b> <code>${escapeTelegramHtml(currentEquations.join(' | '))}</code>`,
+            ]
+          : []),
+        '',
+        '💬 <b>ខ្លឹមសារសំណើ៖</b>',
+        escapeTelegramHtml(message),
+      ];
+
+      const sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetChatId,
+          text: lines.join('\n'),
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+      });
+
+      const sendData: any = await sendRes.json().catch(() => null);
+      if (!sendRes.ok || !sendData?.ok) {
+        const desc = String(sendData?.description || '');
+        console.error('Telegram API failed in /api/graph_feedback:', desc || sendRes.status);
+        if (
+          desc.toLowerCase().includes('chat not found') ||
+          desc.toLowerCase().includes('bot was blocked') ||
+          desc.toLowerCase().includes('user not found')
+        ) {
+          cachedTelegramAdminChatId = null;
+          return res.status(400).json({
+            ok: false,
+            needsBotStart: true,
+            botUsername: 'wsdacademybot',
+            error:
+              'មិនទាន់អាចផ្ញើសារទៅ Admin (@sovansaro) បានទេ ព្រោះគណនី Admin មិនទាន់ចុច Start នៅលើ @wsdacademybot។ សូមចុច /start លើ Bot ម្ដងជាមុនសិន!',
+          });
+        }
+        return res.status(502).json({
+          ok: false,
+          error: 'មានបញ្ហាក្នុងការបញ្ជូនសំណើទៅ Telegram Bot។ សូមព្យាយាមម្ដងទៀត!',
+        });
+      }
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('Error in POST /api/graph_feedback:', error);
+      return res.status(500).json({
+        ok: false,
+        error: 'មានបញ្ហាក្នុងការបញ្ជូនសំណើ។ សូមព្យាយាមម្ដងទៀត!',
+      });
     }
   });
 

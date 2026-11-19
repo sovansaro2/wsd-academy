@@ -6,7 +6,7 @@ import AuthRequiredBanner from '../components/auth/AuthRequiredBanner';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { useOnlineStatus } from '../hooks/usePWA';
-import { Camera, Image as ImageIcon, Send, X, AlertCircle, Code, ListTodo, Calculator, Copy, Check, Eraser, FileText, RotateCcw, WifiOff, History } from 'lucide-react';
+import { Camera, Image as ImageIcon, Send, X, AlertCircle, Code, ListTodo, Calculator, Copy, Check, Eraser, FileText, RotateCcw, WifiOff, History, TrendingUp } from 'lucide-react';
 import DotsLoader from '../components/common/DotsLoader';
 import Markdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -14,6 +14,16 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { latexToPlainText } from '../utils/mathUtils';
 import { addSolverHistoryItem, hydrateStudyHistoryFromOfflineDB } from '../utils/studyHistory';
+import { compileMathExpression } from '../utils/mathGraphParser';
+
+function extractPlottableExpression(rawText) {
+  if (typeof rawText !== 'string') return null;
+  const match = rawText.match(/(?:f\s*\(\s*x\s*\)|g\s*\(\s*x\s*\)|y)\s*=\s*([^\n,;។]+)/i);
+  if (!match) return null;
+  const candidate = match[1].trim();
+  const compiled = compileMathExpression(candidate);
+  return compiled.ok ? candidate : null;
+}
 
 const TerminalBox = ({ title, content, icon: Icon }) => {
   const { language } = useLanguage();
@@ -109,6 +119,7 @@ export default function SolverPage() {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [canRetry, setCanRetry] = useState(false);
@@ -119,6 +130,18 @@ export default function SolverPage() {
       hydrateStudyHistoryFromOfflineDB(currentUser);
     }
   }, [isAuthenticated, currentUser]);
+
+  useEffect(() => {
+    if (!isSubmitting) {
+      setElapsedSeconds(0);
+      return;
+    }
+    setElapsedSeconds(0);
+    const timer = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isSubmitting]);
 
   const handleCopyDetailed = () => {
     if (!result?.detailed_answer) return;
@@ -347,12 +370,16 @@ export default function SolverPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting || (!text.trim() && !imageFile)}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] disabled:opacity-50 disabled:cursor-not-allowed text-[#092731] rounded-lg cursor-pointer transition shadow-sm font-kh-body font-bold"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-2.5 bg-[#38BDF8] hover:bg-[#56CAF9] disabled:opacity-50 disabled:cursor-not-allowed text-[#092731] rounded-lg cursor-pointer transition shadow-sm font-kh-body font-bold tabular-nums whitespace-nowrap"
                 >
                   {isSubmitting ? (
                     <>
                       <DotsLoader size="xs" color="dark" />
-                      <span>{isKm ? 'កំពុងដោះស្រាយ...' : 'Solving...'}</span>
+                      <span>
+                        {isKm
+                          ? `កំពុងដោះស្រាយ (${elapsedSeconds}វិ)`
+                          : `Solving (${elapsedSeconds}s)`}
+                      </span>
                     </>
                   ) : canRetry ? (
                     <>
@@ -367,6 +394,106 @@ export default function SolverPage() {
                   )}
                 </button>
               </div>
+
+              {isSubmitting && (() => {
+                const activeStageIndex =
+                  elapsedSeconds < 3
+                    ? 0
+                    : elapsedSeconds < 7
+                    ? 1
+                    : elapsedSeconds < 14
+                    ? 2
+                    : 3;
+
+                const stages = [
+                  {
+                    shortLabel: isKm ? '១. អានប្រធាន' : '1. Read input',
+                    statusLabel: imageFile
+                      ? isKm
+                        ? '១/៤ · កំពុងអានរូបភាព និងវិភាគប្រធានលំហាត់...'
+                        : '1/4 · Reading image & problem...'
+                      : isKm
+                      ? '១/៤ · កំពុងអាន និងវិភាគប្រធានលំហាត់...'
+                      : '1/4 · Reading & analyzing problem...',
+                  },
+                  {
+                    shortLabel: isKm ? '២. រូបមន្ត' : '2. Formulas',
+                    statusLabel: isKm
+                      ? '២/៤ · កំពុងកំណត់រូបមន្ត និងវិធីសាស្ត្រដោះស្រាយ...'
+                      : '2/4 · Identifying formulas & method...',
+                  },
+                  {
+                    shortLabel: isKm ? '៣. គណនាលម្អិត' : '3. Calculate',
+                    statusLabel: isKm
+                      ? '៣/៤ · កំពុងគណនា និងសរសេរដំណោះស្រាយលម្អិត...'
+                      : '3/4 · Calculating step-by-step solution...',
+                  },
+                  {
+                    shortLabel: isKm ? '៤. ផ្ទៀងផ្ទាត់' : '4. Verify',
+                    statusLabel: isKm
+                      ? '៤/៤ · កំពុងផ្ទៀងផ្ទាត់ចម្លើយ និងរៀបចំរូបមន្ត...'
+                      : '4/4 · Verifying answer & math output...',
+                  },
+                ];
+
+                const progressPct = Math.min(
+                  95,
+                  Math.round(16 + (1 - Math.exp(-elapsedSeconds / 8)) * 79)
+                );
+
+                return (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="bg-white/[0.06] border border-white/10 rounded-xl px-3.5 py-3 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="inline-flex items-center gap-2 font-medium text-white min-w-0">
+                        <DotsLoader size="xs" color="accent" />
+                        <span className="truncate">{stages[activeStageIndex].statusLabel}</span>
+                      </span>
+                      <span className="text-white/75 tabular-nums shrink-0">
+                        {isKm ? `${elapsedSeconds} វិនាទី · ${progressPct}%` : `${elapsedSeconds}s · ${progressPct}%`}
+                      </span>
+                    </div>
+
+                    <div className="h-1.5 w-full bg-white/12 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[#38BDF8] rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                      {stages.map((stage, idx) => {
+                        const isDone = idx < activeStageIndex;
+                        const isCurrent = idx === activeStageIndex;
+                        return (
+                          <div
+                            key={stage.shortLabel}
+                            className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1 border transition-colors ${
+                              isDone
+                                ? 'bg-white/[0.08] border-white/15 text-white/90'
+                                : isCurrent
+                                ? 'bg-white/[0.13] border-white/25 text-white font-semibold'
+                                : 'bg-white/[0.03] border-white/10 text-white/50'
+                            }`}
+                          >
+                            {isDone ? (
+                              <Check className="w-3 h-3 text-emerald-300 shrink-0" />
+                            ) : isCurrent ? (
+                              <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-pulse shrink-0" />
+                            ) : (
+                              <span className="w-1.5 h-1.5 rounded-full bg-white/30 shrink-0" />
+                            )}
+                            <span className="truncate">{stage.shortLabel}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {error && (
                 <div className="p-3 bg-rose-500/15 border border-rose-400/45 text-rose-200 text-sm rounded-lg flex items-center gap-2">
@@ -399,10 +526,24 @@ export default function SolverPage() {
                 <>
                   {/* Short Answer (Terminal Style) */}
                   <div className="space-y-3">
-                    <h3 className="font-bold text-white text-lg flex items-center gap-2 px-1">
-                      <Code className="text-white" />
-                      {isKm ? 'ចម្លើយខ្លី (សង្ខេប)' : 'Short Answer'}
-                    </h3>
+                    <div className="flex items-center justify-between gap-2 px-1">
+                      <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                        <Code className="text-white" />
+                        {isKm ? 'ចម្លើយខ្លី (សង្ខេប)' : 'Short Answer'}
+                      </h3>
+                      {(() => {
+                        const detectedExpr = extractPlottableExpression(text);
+                        return (
+                          <Link
+                            to={detectedExpr ? `/graph?expr=${encodeURIComponent(detectedExpr)}` : '/graph'}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-[#38BDF8]/20 border border-white/12 hover:border-[#38BDF8]/40 text-xs font-semibold text-[#38BDF8] transition-colors whitespace-nowrap"
+                          >
+                            <TrendingUp className="w-3.5 h-3.5" />
+                            <span>{isKm ? 'គូសក្រាហ្វ' : 'Plot Graph'}</span>
+                          </Link>
+                        );
+                      })()}
+                    </div>
                     <TerminalBox 
                       title="wsd-academy.sh" 
                       content={result.short_answer} 

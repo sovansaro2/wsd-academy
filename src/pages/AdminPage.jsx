@@ -932,7 +932,7 @@ export default function AdminPage() {
                   type="text"
                   value={uploadTitle}
                   onChange={(e) => setUploadTitle(e.target.value)}
-                  placeholder={isKm ? 'ឧ. គណិតវិទ្យា ភាគ ១' : 'e.g. Mathematics Part 1'}
+                  placeholder={isKm ? 'បញ្ចូលចំណងជើងសៀវភៅ' : 'Enter book title'}
                   className="w-full min-h-[40px] px-3 py-2 bg-white/[0.04] border border-white/15 rounded-xl text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/20 focus:border-[#38BDF8]"
                 />
               </div>

@@ -11,6 +11,7 @@ import AdminPage from '../pages/AdminPage';
 import MorePage from '../pages/MorePage';
 import SearchPage from '../pages/SearchPage';
 import DownloadsPage from '../pages/DownloadsPage';
+import GraphPage from '../pages/GraphPage';
 
 export default function AppRoutes() {
   return (
@@ -20,6 +21,7 @@ export default function AppRoutes() {
           <Route path="/" element={<HomePage />} />
           <Route path="/solver" element={<SolverPage />} />
           <Route path="/resource" element={<ResourcePage />} />
+          <Route path="/graph" element={<GraphPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/downloads" element={<DownloadsPage />} />

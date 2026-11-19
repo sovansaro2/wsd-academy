@@ -207,7 +207,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
           <Input
             id="reg-last-name"
             label={isKm ? 'គោត្តនាម' : 'Last Name'}
-            placeholder={isKm ? 'ឧ. សុវណ្ណ' : 'e.g. Sovann'}
+            placeholder={isKm ? 'បញ្ចូលគោត្តនាម' : 'Enter last name'}
             value={formData.last_name}
             onChange={(e) => handleChange('last_name', e.target.value)}
             leftIcon={User}
@@ -217,7 +217,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
           <Input
             id="reg-first-name"
             label={isKm ? 'នាម' : 'First Name'}
-            placeholder={isKm ? 'ឧ. សារ៉ូ' : 'e.g. Saro'}
+            placeholder={isKm ? 'បញ្ចូលនាម' : 'Enter first name'}
             value={formData.first_name}
             onChange={(e) => handleChange('first_name', e.target.value)}
             leftIcon={User}
@@ -319,7 +319,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
           <Input
             id="reg-class"
             label={isKm ? 'ថ្នាក់រៀន' : 'Classroom'}
-            placeholder={isKm ? 'ឧ. 12A, 11B' : 'e.g. 12A, 11B'}
+            placeholder={isKm ? 'បញ្ចូលថ្នាក់រៀន' : 'Enter classroom'}
             value={formData.classroom}
             onChange={(e) => handleChange('classroom', e.target.value)}
             leftIcon={GraduationCap}
@@ -332,7 +332,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
         <Input
           id="reg-address"
           label={isKm ? 'ទីលំនៅបច្ចុប្បន្ន' : 'Current Address'}
-          placeholder={isKm ? 'រាជធានី/ខេត្ត, ក្រុង/ស្រុក...' : 'City, District, Province...'}
+          placeholder={isKm ? 'បញ្ចូលទីលំនៅបច្ចុប្បន្ន' : 'Enter current address'}
           value={formData.address}
           onChange={(e) => handleChange('address', e.target.value)}
           leftIcon={MapPin}
@@ -346,7 +346,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
             id="reg-email"
             label={isKm ? 'អ៊ីម៉ែល' : 'Email'}
             type="email"
-            placeholder="example@gmail.com"
+            placeholder={isKm ? 'បញ្ចូលអ៊ីម៉ែល' : 'Enter email'}
             value={formData.email}
             onChange={(e) => handleChange('email', e.target.value)}
             leftIcon={Mail}
@@ -356,7 +356,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
           <Input
             id="reg-phone"
             label={isKm ? 'លេខទូរស័ព្ទ' : 'Phone Number'}
-            placeholder="012 345 678"
+            placeholder={isKm ? 'បញ្ចូលលេខទូរស័ព្ទ' : 'Enter phone number'}
             value={formData.phone}
             onChange={(e) => handleChange('phone', e.target.value)}
             leftIcon={Phone}
@@ -369,7 +369,7 @@ export default function RegisterModal({ isOpen, onClose, onSwitchToLogin }) {
         <Input
           id="reg-telegram"
           label={isKm ? 'Telegram (មិនមានក៏បាន)' : 'Telegram (Optional)'}
-          placeholder="@username"
+          placeholder={isKm ? 'បញ្ចូលឈ្មោះគណនី Telegram' : 'Enter Telegram username'}
           value={formData.telegram}
           onChange={(e) => handleChange('telegram', e.target.value)}
           leftIcon={Send}
